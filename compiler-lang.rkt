@@ -127,9 +127,15 @@
         )))
   #''42)
 
+;; ll-jit compiler-info
+;; (define-struct ll-jit:terminal ())
+;; (define-struct ll-terminals-variable ll-jit:terminal (x))
+;; ll-jit:terminal? 
+
 (define-compiler ll-jit
   (terminals
-   (variable  (x))
+   (variable  (x))  
+   (type-variable (g))
    (float     (f))
    (number    (n))
    (basetype  (tb))
@@ -142,7 +148,7 @@
      (type
       [,x -> ,t])
      (scope
-      [,x -> ,t]))
+      [,g -> ,t]))
   (expressions
    (type (t)
          [name         : ,x
@@ -167,11 +173,11 @@
                        #;(@ t type)])
    (stmt (s)
          [expr         : (expr ,e)]
-         [if-phi       : (if ,phis ,e ,s ,s)]
+         [if-phi       : (if ,p ,e ,s ,s)]
          [if           : (if ,e ,s ,s)]
          [let          : (let ([,x : ,t ,e] ...) ,s)
            #;(s:scope (+ (x -> t)))]
-         [while-phi    : (while ,phis ,e ,s)]
+         [while-phi    : (while ,p ,e ,s)]
          [while        : (while ,e ,s)]
          [return       : (return ,e)]
          [return-void  : (return-void)]
@@ -190,10 +196,13 @@
    (mod (m)
         [module        : (module ,d ...)
           #;(pass-environment * d)]))
-
+  
   (languages
    (LLC1 #:top mod
          (- (stmt if-phi while-phi)))
    (LLC0 #:extends LLC1
          #:top mod
-         (- (stmt (if while))))))
+         (- (stmt (if while)))))) 
+
+
+
