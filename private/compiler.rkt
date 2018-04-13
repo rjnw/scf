@@ -1,19 +1,17 @@
 #lang racket
 
-(module compiler-define-kws racket
-  (define-syntax ast (syntax-rules ()))
-  (define-syntax language (syntax-rules ()))
-  (provide ast language))
 
 (module compiler-stxclass racket
   (require syntax/parse)
   (provide ast-spec language-spec)
 
-
-
+  (define (parse-single-def s)
+    (define s-str (symbol->string s))
+    (pretty-print s-str)
+    (match-define (list id type) (string-split s-str ":"))
+    (cons (string-split type ".") id))
   (define-syntax-class ast-def
     #:description "ast definition"
-    ;; #:attributes (spec)
     (pattern single:id
              #:attr spec `(single . ,(syntax->datum #'single)))
     (pattern ((~datum quote) datum:id)
@@ -26,8 +24,7 @@
     (pattern (~seq repeat:ast-def (~datum ...))
              #:attr spec `(repeat . ,(attribute repeat.spec)))
     (pattern ms:ast-def
-             #:attr spec (attribute ms.spec))
-)
+             #:attr spec (attribute ms.spec)))
 
   (define-syntax-class ast-spec
     #:description "ast specification"
@@ -45,68 +42,45 @@
                        racket/pretty))
   (provide define-compiler)
   (define-syntax (define-compiler stx)
-    ;; (define (ast-defines)
-    ;;   #'())
-    ;; (define (language-defines)
-    ;;   #'())
-    ;;  (ast nodes:ast-spec ...)
-    ;;  (language langs:language-spec ...)
     (syntax-parse stx
       [(_ cid:id (ast nodes:ast-spec ...)
           (language langs:language-spec ...))
-       (pretty-display (attribute nodes.spec))
-       #'0
-       ;; (let* ([base-struct-id (format-id #'cid "$~a" #'cid)]
-       ;;        [base-struct  #`(struct #,base-struct-id ())])
-       ;;   (for/list ([name (syntax->list #'(nodes.name ...))]
-       ;;              [vars (syntax->list #'((nodes.var ...) ...))]
-       ;;              [defs  (syntax->list #'((nodes.def ...) ...))])
-       ;;     (define group-struct-id (format-id #'cid "$~a:~a" #'cid name))
-       ;;     (define group-struct #`(struct #,group-struct-id #,base-struct-id ()))
-       ;;     (define var-structs
-       ;;       (for/list ([var (syntax->list vars)]
-       ;;                  [def (syntax->list defs)])
-       ;;         (pretty-display (attribute nodes))
-       ;;         (define var-struct-id (format-id #'cid "$~a:~a:~a" #'cid name var))
-
-       ;;         #`(struct #,var-struct-id #,group-struct-id #,def)))
-       ;;     (pretty-display (syntax->datum group-struct))
-       ;;     (pretty-display (map syntax->datum var-structs)))
-
-
-       ;;   ;; (print (for/list ([name (syntax->datum #'(nodes.name ...))]
-       ;;   ;;                   [vars (syntax->datum #'((nodes.var ...) ...))]
-       ;;   ;;                   [defs  (syntax->datum #'((nodes.def ...) ...))])
-       ;;   ;;          (cons name (for/list ([var vars]
-       ;;   ;;                                [def defs])
-       ;;   ;;                       (cons var  def)))))
-       ;;   ;; (print #'(nodes.name ...))
-       ;;   #`(begin 42
-       ;;            ;; #,@(ast-defines nodes)
-       ;;            ;; #,@(language-defines langs)
-       ;;            ))
-       ])))
-
-(require 'definer 'compiler-define-kws)
-(provide define-compiler)
+       (define full-spec
+         (for/list ([node-type (syntax->list #'(nodes.name ...))]
+                    [type-vars (syntax->list #'((nodes.var ...) ...))]
+                    [type-attributes (attribute nodes.spec)])
+           (cons node-type
+                 (for/list ([type-var (syntax->list type-vars)]
+                            [type-attribute type-attributes])
+                   (cons type-var type-attribute)))))
+       #`(define cid (list #,@(for/list ([node-type (syntax->list #'(nodes.name ...))]
+                                         [type-vars (syntax->list #'((nodes.var ...) ...))]
+                                         [type-attributes (attribute nodes.spec)])
+                                #`(cons (quote-syntax #,node-type)
+                                        (list #,@(for/list ([type-var (syntax->list type-vars)]
+                                                            [type-attribute type-attributes])
+                                                   #`(cons (quote-syntax #,type-var)
+                                                           (quote #,type-attribute))))))))])))
 
 (module test racket
-  (require (submod ".." definer)
-           (submod ".." compiler-define-kws))
-  ;; (define-compiler c0)
+  (require (submod ".." definer))
+  (define-compiler LC
+    (ast
+     (expression
+      [function ('lambda (arg:terminal.sym) body:expression)]
+      [app (rator:expression rand:expression)]
+      [term symbol?:native-check]))
+    (language
+     (l1 (expression *))))
   (define-compiler c1
     (ast
      (terminal
-      [n number?:native]
-      [str string?:native]
-      [sym symbol?:id]
-      [t (lam ...)]
-      )
+      [n number?:native-check]
+      [str string?:native-check]
+      [sym symbol?:id])
      (expression
-      [function ('lambda (arg:terminal:sym ...) body:expression)]
+      [function ('lambda (arg:terminal.sym ...) body:expression)]
       [app (rator:id args:expression ...)]
-      [term t:terminal]
-      )
-     )
+      [term t:terminal]))
     (language
      (l1 (terminals *) (expr app term)))))
