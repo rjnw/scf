@@ -49,34 +49,36 @@
     (define (get-id i)
       (define parts (string-split (symbol->string i) ":"))
       (string->symbol (car parts)))
-    (define (get-attrs attr-spec)
-      (match attr-spec
+    (define (get-ast-args ast-spec)
+      (match ast-spec
         [`(single . ,s) (get-id s)]
-        [`(multiple . ,m) (map get-attrs m)]
-        [`(repeat . ,r) (get-attrs r)]
+        [`(multiple . ,m) (map get-ast-args m)]
+        [`(repeat . ,r) (get-ast-args r)]
         [`(quoted . ,_) '()]))
+
     (define (get-printer spec attrs)
-      (define (get-attr-printer spec attrs k)
-        (printf "get-attr-printer: ~a ~a\n" spec attrs)
+      (define (get-ast-printer spec attrs k)
+        (printf "get-ast-printer: ~a ~a\n" spec attrs)
         (match* (spec attrs)
           [(`(single . ,s) p) (k (car p) (cdr p))]
           [(`(multiple . ,ms) mps)
-           (get-attr-printer-multiple ms mps k)]
+           (get-ast-printer-multiple ms mps k)]
           [(`(repeat . ,r) rp)
-           (get-attr-printer r rp (λ (v attrs) (k `(,v '*) attrs)))]
+           (get-ast-printer r rp (λ (v attrs) (k `(,v '*) attrs)))]
           [(`(quoted . ,q) _) (k q attrs)]))
-      (define (get-attr-printer-multiple spec attrs k)
-        (printf "get-attr-printer-multiple: ~a ~a\n" spec attrs)
+      (define (get-ast-printer-multiple spec attrs k)
+        (printf "get-ast-printer-multiple: ~a ~a\n" spec attrs)
         (if (empty? spec)
             (k '() attrs)
-            (get-attr-printer
+            (get-ast-printer
              (car spec) attrs
              (λ (v attrs)
-               (get-attr-printer-multiple (cdr spec) attrs (λ (nv nattrs) (k (cons v nv) nattrs))))))
-)
-      (get-attr-printer spec attrs (λ (v _) v)))
+               (get-ast-printer-multiple (cdr spec) attrs (λ (nv nattrs) (k (cons v nv) nattrs)))))))
+      (get-ast-printer spec attrs (λ (v _) v)))
+
     (get-printer
-     `(multiple . ((quoted . lambda) (multiple . ((repeat . (single . arg:terminal.sym)))) (single . body:expression)))
+     `(multiple . ((quoted . lambda) (multiple . ((repeat . (single . arg:terminal.sym))))
+                                     (single . body:expression)))
      '(args body))
     )
 
@@ -90,13 +92,15 @@
                (define node-id (format-id node-type "~a:~a" cid node-type))
                (define node-format (format-id node-type "<~a:~a>" cid node-type))
                (cons
-                #`(struct #,node-id () #:property prop:custom-write (λ (_) (quote #,node-format)))
-                (for/list ([attr (cdr node)])
-                  (define attr-name (car attr))
-                  (define attr-spec (cdr attr))
-
-                  (let ([attr-id (format-id attr-name "~a:~a:~a" cid node-type attr-name)])
-                    #`(struct #,attr-id #,node-id #,(flatten (get-attrs attr-spec)))))))))
+                #`(struct #,node-id ())
+                (for/list ([ast-spec-pair (cdr node)])
+                  (define ast-name (car ast-spec-pair))
+                  (define ast-spec (cdr ast-spec-pair))
+                  (define ast-args (flatten (get-ast-args ast-spec)))
+                  (print "printer: \n")
+                  (pretty-display (get-printer ast-spec ast-args))
+                  (let ([attr-id (format-id ast-name "~a:~a:~a" cid node-type ast-name)])
+                    #`(struct #,attr-id #,node-id #,ast-args)))))))
     (syntax-parse stx
       [(_ cid:id (ast nodes:ast-spec ...)
           (language langs:language-spec ...))
@@ -108,16 +112,20 @@
                  (for/list ([type-var (syntax->list type-vars)]
                             [type-attribute type-attributes])
                    (cons type-var type-attribute)))))
+       (define full-value
+         #`(list #,@(for/list ([node-type (syntax->list #'(nodes.name ...))]
+                               [type-vars (syntax->list #'((nodes.var ...) ...))]
+                               [type-attributes (attribute nodes.spec)])
+                      #`(cons (quote-syntax #,node-type)
+                              (list #,@(for/list ([type-var (syntax->list type-vars)]
+                                                  [type-attribute type-attributes])
+                                         #`(cons (quote-syntax #,type-var)
+                                                 (quote #,type-attribute))))))))
        (pretty-display full-spec)
+       (pretty-display (syntax->datum full-value))
        (pretty-display (syntax->datum (build-struct-defs #'cid full-spec)))
-       #`(define cid (list #,@(for/list ([node-type (syntax->list #'(nodes.name ...))]
-                                         [type-vars (syntax->list #'((nodes.var ...) ...))]
-                                         [type-attributes (attribute nodes.spec)])
-                                #`(cons (quote-syntax #,node-type)
-                                        (list #,@(for/list ([type-var (syntax->list type-vars)]
-                                                            [type-attribute type-attributes])
-                                                   #`(cons (quote-syntax #,type-var)
-                                                           (quote #,type-attribute))))))))])))
+
+       #`(define cid #,full-value)])))
 
 (module test racket
   (require (submod ".." definer))
@@ -126,15 +134,17 @@
      (expression
       [function ('lambda (arg:terminal.sym) body:expression)]
       [app (rator:expression rand:expression)]
-      [term sym:native-check.symbol?]))
+      [term sym:native.symbol?]))
     (language
      (l1 (expression *))))
+
+
   (define-compiler c1
     (ast
      (terminal
       [num n:native-check.number?]
-      [str str:native-check.string?]
-      [sym sym:native-check.symbol?])
+      [str str:native.string?]
+      [sym sym:native.symbol?])
      (expression
       [function ('lambda (arg:terminal.sym ...) body:expression)]
       [app (rator:id args:expression ...)]
