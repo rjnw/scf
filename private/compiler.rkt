@@ -56,51 +56,48 @@
         [`(repeat . ,r) (get-ast-args r)]
         [`(quoted . ,_) '()]))
 
-    (define (get-printer spec attrs)
-      (define (get-ast-printer spec attrs k)
-        (printf "get-ast-printer: ~a ~a\n" spec attrs)
+    (define (get-writer name spec attrs)
+      (define (get-ast-writer spec attrs k)
+        ;; (printf "get-ast-writer: ~a ~a\n" spec attrs)
         (match* (spec attrs)
-          [(`(single . ,s) p) (k (car p) (cdr p))]
+          [(`(single . ,s) p) (k #`,#,(car p) (cdr p))]
           [(`(multiple . ,ms) mps)
-           (get-ast-printer-multiple ms mps k)]
+           (get-ast-writer-multiple ms mps k)]
           [(`(repeat . ,r) rp)
-           (get-ast-printer r rp (λ (v attrs) (k `(,v '*) attrs)))]
+           (get-ast-writer r rp (λ (v attrs) (k #`,@`#,v attrs)))]
           [(`(quoted . ,q) _) (k q attrs)]))
-      (define (get-ast-printer-multiple spec attrs k)
-        (printf "get-ast-printer-multiple: ~a ~a\n" spec attrs)
+      (define (get-ast-writer-multiple spec attrs k)
+        ;; (printf "get-ast-writer-multiple: ~a ~a\n" spec attrs)
         (if (empty? spec)
             (k '() attrs)
-            (get-ast-printer
+            (get-ast-writer
              (car spec) attrs
              (λ (v attrs)
-               (get-ast-printer-multiple (cdr spec) attrs (λ (nv nattrs) (k (cons v nv) nattrs)))))))
-      (get-ast-printer spec attrs (λ (v _) v)))
-
-    (get-printer
-     `(multiple . ((quoted . lambda) (multiple . ((repeat . (single . arg:terminal.sym))))
-                                     (single . body:expression)))
-     '(args body))
-    )
+               (get-ast-writer-multiple (cdr spec) attrs (λ (nv nattrs) (k (cons v nv) nattrs)))))))
+      #`(define (write-proc struc port mode)
+          (match-define (#,name #,@attrs) struc)
+          (display `#,(get-ast-writer spec attrs (λ (v _) v)) port))))
 
 
 
   (define-syntax (define-compiler stx)
     (define (build-struct-defs cid full-spec)
-      #`(begin
-          #,@(for/list ([node full-spec])
-               (define node-type (car node))
-               (define node-id (format-id node-type "~a:~a" cid node-type))
-               (define node-format (format-id node-type "<~a:~a>" cid node-type))
-               (cons
-                #`(struct #,node-id ())
-                (for/list ([ast-spec-pair (cdr node)])
-                  (define ast-name (car ast-spec-pair))
-                  (define ast-spec (cdr ast-spec-pair))
-                  (define ast-args (flatten (get-ast-args ast-spec)))
-                  (print "printer: \n")
-                  (pretty-display (get-printer ast-spec ast-args))
-                  (let ([attr-id (format-id ast-name "~a:~a:~a" cid node-type ast-name)])
-                    #`(struct #,attr-id #,node-id #,ast-args)))))))
+      (flatten (for/list ([node full-spec])
+         (define node-type (car node))
+         (define node-id (format-id node-type "~a:~a" cid node-type))
+         (define node-format (format-id node-type "<~a:~a>" cid node-type))
+         (cons
+          #`(struct #,node-id ())
+          (for/list ([ast-spec-pair (cdr node)])
+            (define ast-name (car ast-spec-pair))
+            (define ast-spec (cdr ast-spec-pair))
+            (define ast-args (flatten (get-ast-args ast-spec)))
+            (define ast-args-syntax (map (λ (x) ( datum->syntax ast-name x)) ast-args))
+            (let ([attr-id (format-id ast-name "~a:~a:~a" cid node-type ast-name)])
+              (define writer (get-writer attr-id ast-spec ast-args))
+              #`(struct #,attr-id #,node-id #,ast-args
+                  #:methods gen:custom-write
+                  ( #,writer))))))))
     (syntax-parse stx
       [(_ cid:id (ast nodes:ast-spec ...)
           (language langs:language-spec ...))
@@ -121,11 +118,14 @@
                                                   [type-attribute type-attributes])
                                          #`(cons (quote-syntax #,type-var)
                                                  (quote #,type-attribute))))))))
+       (define struct-defs (build-struct-defs #'cid full-spec))
        (pretty-display full-spec)
-       (pretty-display (syntax->datum full-value))
-       (pretty-display (syntax->datum (build-struct-defs #'cid full-spec)))
-
-       #`(define cid #,full-value)])))
+       (define defs
+         #`(begin
+             (define cid #,full-value)
+             #,@struct-defs))
+       (pretty-display (syntax->datum defs))
+       defs])))
 
 (module test racket
   (require (submod ".." definer))
