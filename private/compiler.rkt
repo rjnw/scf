@@ -41,39 +41,54 @@
                        racket/pretty))
   (provide define-compiler define-ast)
   (begin-for-syntax
-    (define (get-id i)
-      (define parts (string-split (symbol->string i) ":"))
-      (string->symbol (car parts)))
+    (define (get-ast-full-args ast-spec)
+      (define (rec ast-spec)
+        (match ast-spec
+          [`(single . ,s)  s]
+          [`(multiple . ,m) (map rec m)]
+          [`(repeat . ,r) (rec r)]
+          [`(quoted . ,_) '()]))
+      (flatten (rec ast-spec)))
     (define (get-ast-args ast-spec)
-      (match ast-spec
-        [`(single . ,s) (get-id s)]
-        [`(multiple . ,m) (map get-ast-args m)]
-        [`(repeat . ,r) (get-ast-args r)]
-        [`(quoted . ,_) '()]))
+      (define (get-id i)
+        (define parts (string-split (symbol->string i) ":"))
+        (string->symbol (car parts)))
+      (map get-id (get-ast-full-args ast-spec)))
+    (define (get-ast-types ast-spec)
+      (define (get-type i)
+        (define parts (string-split (symbol->string i) ":"))
+        (string->symbol (car (string-split (cadr parts) "."))))
+      (map get-type (get-ast-full-args ast-spec) ))
+    (define (get-arg-native-check full-arg)
+      (define parts (string-split (symbol->string full-arg) ":"))
+      (define type-parts (string-split (cadr parts) "."))
+      (second type-parts))
 
-    (define (get-writer name spec attrs)
-      (define (get-ast-writer spec attrs k)
-        ;; (printf "get-ast-writer: ~a ~a\n" spec attrs)
+    (define (ast-format ast-spec)
+      (define (simple-format spec attrs k)
         (match* (spec attrs)
           [(`(single . ,s) p) (k #`,#,(car p) (cdr p))]
           [(`(multiple . ,ms) mps)
-           (get-ast-writer-multiple ms mps k)]
+           (multiple-format ms mps k)]
           [(`(repeat . ,r) rp)
-           (get-ast-writer r rp (λ (v attrs) (k #`,@`#,v attrs)))]
+           (simple-format r rp (λ (v attrs) (k #`,@`#,v attrs)))]
           [(`(quoted . ,q) _) (k q attrs)]))
-      (define (get-ast-writer-multiple spec attrs k)
-        ;; (printf "get-ast-writer-multiple: ~a ~a\n" spec attrs)
+      (define (multiple-format spec attrs k)
         (if (empty? spec)
             (k '() attrs)
-            (get-ast-writer
+            (simple-format
              (car spec) attrs
              (λ (v attrs)
-               (get-ast-writer-multiple
+               (multiple-format
                 (cdr spec) attrs
                 (λ (nv nattrs) (k (cons v nv) nattrs)))))))
+      (simple-format ast-spec (get-ast-args ast-spec) (λ (v _) v)))
+
+    (define (get-writer name spec attrs)
       #`(define (write-proc struc port mode)
           (match-define (#,name #,@attrs) struc)
-          (display `#,(get-ast-writer spec attrs (λ (v _) v)) port)))
+          (display `#,(ast-format spec) port)))
+
 
     (define (parse-ast stx)
       (syntax-parse stx
@@ -91,18 +106,40 @@
                            (list #,@(for/list ([type-spec (cdr node-spec)])
                                       #`(cons (quote-syntax #,(car type-spec))
                                               (quote #,(cdr type-spec)))))))))
-    (define (build-struct-defs cid full-spec)
+    (define (build-defs cid full-spec)
       (flatten
        (for/list ([node full-spec])
          (define node-type (car node))
          (define node-id (format-id node-type "~a:~a" cid node-type))
-         (define node-format (format-id node-type "<~a:~a>" cid node-type))
-         (cons
+         (list
           #`(struct #,node-id ())
+          #`(define (#,(format-id node-type "sexp->~a" node-id) s)
+              (match s
+                #,@(for/list ([ast-spec-pair (cdr node)])
+                     (define ast-name (car ast-spec-pair))
+                     (define ast-spec (cdr ast-spec-pair))
+                     (define ast-args (get-ast-args ast-spec))
+                     (define ast-arg-types (get-ast-types ast-spec))
+                     #`(`#,(ast-format (cdr ast-spec-pair))
+                        #,@(if (and (equal? (length ast-args) 1)
+                                    (equal? (car ast-arg-types) 'native))
+                               (list #'#:when
+                                     #`(#,(get-arg-native-check
+                                           (car (get-ast-full-args ast-spec)))
+                                        #,(car ast-args)))
+                               '())
+                        (#,(format-id ast-name "~a:~a:~a" cid node-type ast-name)
+                         #,@ (map
+                              (λ (id type)
+                                (if (equal? type 'native)
+                                    id
+                                    #`(#,(format-id ast-name "sexp->~a:~a"
+                                                    cid type) #,id)))
+                              ast-args ast-arg-types))))))
           (for/list ([ast-spec-pair (cdr node)])
             (define ast-name (car ast-spec-pair))
             (define ast-spec (cdr ast-spec-pair))
-            (define ast-args (flatten (get-ast-args ast-spec)))
+            (define ast-args (get-ast-args ast-spec))
             (define ast-args-syntax
               (map (λ (x) (datum->syntax ast-name x)) ast-args))
             (define attr-id
@@ -119,7 +156,7 @@
           (language langs:language-spec ...))
        (define ast-spec (parse-ast #'ast-stx))
        (define ast-syntax (ast-spec->syntax ast-spec))
-       (define struct-defs (build-struct-defs #'cid ast-spec))
+       (define struct-defs (build-defs #'cid ast-spec))
        (pretty-display (syntax->datum ast-syntax))
        (pretty-display (map syntax->datum struct-defs))
       #`(begin
@@ -131,7 +168,7 @@
       [(_ cid:id ast-stx:expr)
        (define ast-spec (parse-ast #'ast-stx))
        (define ast-syntax (ast-spec->syntax ast-spec))
-       (define struct-defs (build-struct-defs #'cid ast-spec))
+       (define struct-defs (build-defs #'cid ast-spec))
        (pretty-display (syntax->datum ast-syntax))
        (pretty-display (map syntax->datum struct-defs))
       #`(begin
@@ -154,12 +191,12 @@
   (define-ast c1
     (ast
      (terminal
-      [num n:native-check.number?]
+      [num n:native.number?]
       [str str:native.string?]
       [sym sym:native.symbol?])
      (expression
       [function ('lambda (arg:terminal.sym ...) body:expression)]
-      [app (rator:id args:expression ...)]
+      [app (rator:expression args:expression ...)]
       [term t:terminal])))
 
   #;(define-ast sham
@@ -196,7 +233,8 @@
        [var      (id:terminal.sym)]
        [global   (id:terminal.sym)]
        [external (lib-id:terminal.sym id:terminal.sym t:type)]
-       [let      ((ids:terminal.sym vals:expr types:type) ... stmt:stmt expr:expr)]
+       [let      ((ids:terminal.sym vals:expr types:type)
+                  ... stmt:stmt expr:expr)]
        #:sub (const
               [fl     (value:terminal.float        type:type)]
               [si     (value:terminal.signed-int   type:type)]
