@@ -150,4 +150,54 @@
       [app (rator:id args:expression ...)]
       [term t:terminal]))
     (language
-     (l1 (terminals *) (expr app term)))))
+     (l1 (terminals *) (expr app term))))
+
+  (define-ast sham
+    (def
+      [function      (arg-ids arg-types ret-type body)]
+      [type          (type)]
+      [global        (type)]
+      [global-string (str)]
+      #:common [info #:mutable])
+    (type
+     [internal ()]
+     [ref      (to)]
+     [struct   (fields types)]
+     [function (args ret)]
+     [pointer  (to)]
+     [array    (of size)]
+     [vector   (of size)])
+    (stmt
+     [set!     (lhs:expr.var val:expr)]
+     [if       (test:expr then:stmt else:stmt)]
+     [switch   (test:expr (check:expr body:stmt) ... default)]
+     [break    ()]
+     [while    (test:expr body:stmt)]
+     [return   (value:expr)]
+     [void     ()]
+     [expr     (e:expr)]
+     [block    (stmts:stmt ...)])
+    (expr
+     [app      (rator:expr rands:expr ...)]
+     [void     ()]
+     [sizeof   (t:type)]
+     [type     (t:type)]
+     [gep      (pointer:expr indexes:expr ...)]
+     [var      (id:terminal.sym)]
+     [global   (id:terminal.sym)]
+     [external (lib-id:terminal.sym id:terminal.sym t:type)]
+     [let      ((ids:terminal.sym vals:expr types:type) ... stmt:stmt expr:expr)]
+     #:sub (const
+            [fl     (value:terminal.float        type:type)]
+            [si     (value:terminal.signed-int   type:type)]
+            [ui     (value:terminal.unsigned-int type:type)]
+            [string (value:terminal.string       type:type)]
+            [llvm   (value:terminal.llvm         type:type)]
+            [struct (value:terminal.struct       type:type)]
+            [array  (value:terminal.array        type:type)]
+            [vector (value:terminal.vector       type:type)]))
+    (rator
+     [symbol    (id:terminal.sym)]
+     [intrinsic (id:terminal.sym return-type:type)]
+     [external  (lib-id:terminal.sym id:terminal.sym ret-type:type)]
+     [racket    (id:terminal.sym racket-value:terminal.rkt full-type:type)])))
