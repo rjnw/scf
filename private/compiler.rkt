@@ -1,25 +1,39 @@
 #lang racket
 
 
+(module spec-structs racket
+  (provide (all-defined-out))
+
+  (struct spec:ast:single   (spec))
+  (struct spec:ast:datum    (spec))
+  (struct spec:ast:multiple (spec))
+  (struct spec:ast:repeat   (spec)))
+
 (module compiler-stxclass racket
   (require syntax/parse)
   (provide ast-spec language-spec)
+  (require (submod ".." spec-structs))
 
   (define-syntax-class ast-def
     #:description "ast definition"
     (pattern single:id
-             #:attr spec `(single . ,(syntax->datum #'single)))
+             #:attr spec (spec:ast:single (syntax->datum #'single)))
     (pattern ((~datum quote) datum:id)
-             #:attr spec `(quoted . ,(syntax->datum #'datum)))
+             #:attr spec (spec:ast:datum (syntax->datum #'datum)))
     (pattern (multiple:multi-ast-def ...)
-             #:attr spec `(multiple . ,(attribute multiple.spec))))
-
-  (define-splicing-syntax-class multi-ast-def
-    #:description "ast definition of a list of attributes"
-    (pattern (~seq repeat:ast-def (~datum ...))
-             #:attr spec `(repeat . ,(attribute repeat.spec)))
-    (pattern ms:ast-def
-             #:attr spec (attribute ms.spec)))
+            #:attr spec (spec:ast:multiple (attribute multiple.spec)))
+    ;; (pattern ((~or (~seq repeat:ast-def (~datum ...)) ms:ast-def) ...)
+    ;;          #:attr spec (spec:ast:multiple
+    ;;                       ((λ (s r) (if s s (map spec:ast:repeat r)))
+    ;;                        (attribute ms.spec)
+    ;;                        (attribute repeat.spec))))
+    )
+ (define-splicing-syntax-class multi-ast-def ;
+   #:description "ast definition of a list of attributes"
+   (pattern (~seq repeat:ast-def (~datum ...))
+            #:attr spec (spec:ast:repeat (attribute repeat.spec)))
+   (pattern ms:ast-def
+            #:attr spec (attribute ms.spec)))
 
   (define-syntax-class ast-spec
     #:description "ast specification"
@@ -33,6 +47,7 @@
 
 (module definer racket
   (require (for-syntax (submod ".." compiler-stxclass)
+                       (submod ".." spec-structs)
                        racket/list
                        racket/match
                        racket/string
@@ -44,10 +59,10 @@
     (define (get-ast-full-args ast-spec)
       (define (rec ast-spec)
         (match ast-spec
-          [`(single . ,s)  s]
-          [`(multiple . ,m) (map rec m)]
-          [`(repeat . ,r) (rec r)]
-          [`(quoted . ,_) '()]))
+          [(spec:ast:single s)  s]
+          [(spec:ast:multiple m) (map rec m)]
+          [(spec:ast:repeat r) (rec r)]
+          [(spec:ast:datum _) '()]))
       (flatten (rec ast-spec)))
     (define (get-ast-args ast-spec)
       (define (get-id i)
@@ -67,12 +82,12 @@
     (define (ast-format ast-spec)
       (define (simple-format spec attrs k)
         (match* (spec attrs)
-          [(`(single . ,s) p) (k #`,#,(car p) (cdr p))]
-          [(`(multiple . ,ms) mps)
+          [((spec:ast:single s) p) (k #`,#,(car p) (cdr p))]
+          [((spec:ast:multiple ms) mps)
            (multiple-format ms mps k)]
-          [(`(repeat . ,r) rp)
+          [((spec:ast:repeat r) rp)
            (simple-format r rp (λ (v attrs) (k #`,@`#,v attrs)))]
-          [(`(quoted . ,q) _) (k q attrs)]))
+          [((spec:ast:datum q) _) (k q attrs)]))
       (define (multiple-format spec attrs k)
         (if (empty? spec)
             (k '() attrs)
