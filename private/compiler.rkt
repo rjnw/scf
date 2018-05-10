@@ -1,5 +1,6 @@
 #lang racket
 
+
 (module spec-structs racket
   (provide (all-defined-out))
 
@@ -18,9 +19,9 @@
   (define-syntax-class ast-def
     #:description "ast definition"
     (pattern single:id
-             #:attr spec (spec:ast:pat:single #'single))
+             #:attr spec (spec:ast:pat:single (syntax->datum #'single)))
     (pattern ((~datum quote) datum:id)
-             #:attr spec (spec:ast:pat:datum #'datum))
+             #:attr spec (spec:ast:pat:datum (syntax->datum #'datum)))
     (pattern (multiple:multi-ast-def ...)
             #:attr spec (spec:ast:pat:multiple (attribute multiple.spec)))
     ;; (pattern ((~or (~seq repeat:ast-def (~datum ...)) ms:ast-def) ...)
@@ -46,67 +47,53 @@
     (pattern (lang:id (name:id var:id ...) ...))))
 
 
-(module helper racket
-  (require (submod ".." spec-structs)
-           racket/syntax)
-  (provide (all-defined-out))
-  (define (node-args node-pat)
+(module definer racket
+  (require (for-syntax (submod ".." compiler-stxclass)
+                       (submod ".." spec-structs)
+                       syntax/parse
+                       racket/syntax
+                       racket/pretty))
+  (provide define-ast)
+
+  (begin-for-syntax
+    (require racket)
+    (define (full-id lineage)
+      (foldl (λ (c d) (format-id c "~a:~a" c d)) (car lineage) (cdr lineage)))
+    (define (node-args node-pat)
       (define (rec pat)
         (match pat
           [(spec:ast:pat:single s)  s]
           [(spec:ast:pat:multiple m) (map rec m)]
           [(spec:ast:pat:repeat r) (rec r)]
           [(spec:ast:pat:datum _) '()]))
-    (rec node-pat))
-    ;; (define (get-ast-args ast-spec)
-    ;;   (define (get-id i)
-    ;;     (define parts (string-split (symbol->string i) ":"))
-    ;;     (string->symbol (car parts)))
-    ;;   (map get-id (get-ast-full-args ast-spec)))
-    ;; (define (get-ast-types ast-spec)
-    ;;   (define (get-type i)
-    ;;     (define parts (string-split (symbol->string i) ":"))
-    ;;     (string->symbol (car (string-split (cadr parts) "."))))
-    ;;   (map get-type (get-ast-full-args ast-spec) ))
-    ;; (define (get-arg-native-check full-arg)
-    ;;   (define parts (string-split (symbol->string full-arg) ":"))
-    ;;   (define type-parts (string-split (cadr parts) "."))
-    ;;   (second type-parts))
+      (rec node-pat))
 
-  (define (full-id lineage)
-    (foldr (λ (c d) (format-id c "~a:~a" c d)) (car lineage) (cdr lineage)))
-  (define (node-writer var pat lineage)
-      (define (ast-format ast-spec)
-        (define (simple-format spec attrs k)
-          (match* (spec attrs)
-            [((spec:ast:pat:single s) p) (k #`,#,(car p) (cdr p))]
-            [((spec:ast:pat:multiple ms) mps)
-             (multiple-format ms mps k)]
-            [((spec:ast:pat:repeat r) rp)
-             (simple-format r rp (λ (v attrs) (k #`,@`#,v attrs)))]
-            [((spec:ast:pat:datum q) _) (k q attrs)]))
-        (define (multiple-format spec attrs k)
-          (if (empty? spec)
-              (k '() attrs)
-              (simple-format
-               (car spec) attrs
-               (λ (v attrs)
-                 (multiple-format
-                  (cdr spec) attrs
-                  (λ (nv nattrs) (k (cons v nv) nattrs)))))))
-        (simple-format ast-spec (flatten (node-args ast-spec)) (λ (v _) v)))
+    (define (node-pat-format node-pat)
+      (define (rec pat args)
+        (match* (pat args)
+          [((spec:ast:pat:single s) p) #`,#,p]
+          [((spec:ast:pat:multiple ms) mps)
+           #`(#,@(map rec ms mps))]
+          [((spec:ast:pat:repeat r) rp)
+           #`,@`#,(rec r rp)]
+          [((spec:ast:pat:datum q) _) #`#,q]))
+      (rec node-pat (node-args node-pat)))
+
+    (define (node-writer var pat lineage)
       #`(define (write-proc struc port mode)
-          (match-define (#,var #,@(flatten (node-args pat))) struc)
-          (display `#,(ast-format pat) port)))
+          (match-define (#,(full-id (cons var lineage)) #,@(flatten (node-args pat))) struc)
+          (display `#,(node-pat-format pat) port)))
 
     (define (build-defs lineage type)
       (match type
-        [`(,groups ...) (map (curry build-defs lineage) groups)]
+        [`(,groups ...)
+         #`(begin
+           #,@(map (curry build-defs lineage) groups))]
         [(spec:ast:group name defs)
-         (cons
-          #'()
-          ;; (build-group-reader lineage type)
-          (map (curry build-defs (cons name lineage)) defs))]
+         #`(begin
+             (struct #,(full-id (cons name lineage)) ())
+             ;; (build-group-reader lineage type)
+             #,@(map (curry build-defs (cons name lineage)) defs))]
         [(spec:ast:node var pat)
          (build-node-defs var pat lineage)]))
 
@@ -154,57 +141,19 @@
                 (format-id ast-name "~a:~a:~a" cid node-type ast-name))
               (define writer (get-writer attr-id ast-spec ast-args))
               #`(struct #,attr-id #,node-id #,ast-args
-                  #:methods gen:custom-write ( #,writer))))))))
-
-(module definer racket
-  (require (for-syntax (submod ".." compiler-stxclass)
-                       (submod ".." helper)
-                       syntax/parse
-                       racket/pretty
-                       racket/syntax))
-  (provide ;; define-compiler
-           define-ast)
-
-
-  (begin-for-syntax
+                  #:methods gen:custom-write ( #,writer)))))))
     (define (parse-ast stx)
       (syntax-parse stx
         [(ast nodes:ast-spec ...)
-         (attribute nodes.spec)]))
-
-    ;; (define (ast-spec->syntax ast-spec)
-    ;;   #`(list #,@(for/list ([node-spec ast-spec])
-    ;;                #`(cons (quote-syntax #,(car node-spec))
-    ;;                        (list #,@(for/list ([type-spec (cdr node-spec)])
-    ;;                                   #`(cons (quote-syntax #,(car type-spec))
-    ;;                                           (quote #,(cdr type-spec)))))))))
-    )
-
-  ;; (define-syntax (define-compiler stx)
-  ;;   (syntax-parse stx
-  ;;     [(_ cid:id ast-stx:expr
-  ;;         (language langs:language-spec ...))
-  ;;      (define ast-spec (parse-ast #'ast-stx))
-  ;;      (define ast-syntax (ast-spec->syntax ast-spec))
-  ;;      (define struct-defs (build-defs #'cid ast-spec))
-  ;;      (pretty-display (syntax->datum ast-syntax))
-  ;;      (pretty-display (map syntax->datum struct-defs))
-  ;;     #`(begin
-  ;;         (define cid #,ast-syntax)
-  ;;         #,@struct-defs)]))
+         (attribute nodes.spec)])))
 
   (define-syntax (define-ast stx)
     (syntax-parse stx
       [(_ cid:id ast-stx:expr)
        (define ast-spec (parse-ast #'ast-stx))
-       (pretty-display ast-spec)
-       ;; (define ast-syntax (ast-spec->syntax ast-spec))
        (define struct-defs (build-defs (list #'cid) ast-spec))
-       ;; (pretty-display (syntax->datum ast-syntax))
-       (pretty-display (map syntax->datum struct-defs))
-      #`(begin
-          ;; (define cid #,ast-syntax)
-          #,@struct-defs)])))
+       (pretty-display (syntax->datum struct-defs))
+       struct-defs])))
 
 (module test racket
   (require (submod ".." definer))
