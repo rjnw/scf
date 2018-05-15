@@ -58,10 +58,12 @@
                        syntax/parse
                        racket/syntax
                        racket/pretty))
+
   (provide define-ast)
 
   (begin-for-syntax
     (require racket)
+    (require syntax/datum)
     (define (full-id lineage)
       (foldl (λ (c d) (format-id c "~a:~a" c d)) (car lineage) (cdr lineage)))
     (define (node-args node-pat)
@@ -72,6 +74,48 @@
           [(ast:pat:repeat r) (rec r)]
           [(ast:pat:datum _) '()]))
       (rec node-pat))
+
+    (define (node-pat-format^ node-pat
+                              (single (λ (v) #`,#,v))
+                              (multiple (λ (vs) #`(#,@vs)))
+                              (repeat (λ (v) #`,@`#,v))
+                              (datum (λ (v) #`#,v)))
+      (define (build-repeat-printer lst)
+        (let ([g-vars (map (λ(v) (gensym 'g)) lst)])
+          #`(with-datum #,(for/list ([r lst]
+                                     [g g-vars])
+                            #`(( #,g #,(datum->syntax #'1 '...)) #,(build-printer r)))
+              (datum (#,g-vars  #,(datum->syntax #'1 '...))))))
+      (define (build-printer v)
+        (printf "build-printer: ~a\n" v)
+        (if (syntax? v)
+            v
+            #`(list #,@(map build-printer v))))
+
+      (define (rec pat)
+        (match pat
+          [(ast:pat:single s)
+           (printf "single: ~a\n" (syntax->datum s)) s]
+          [(ast:pat:multiple m)
+           (printf "multiple: ~a\n" m)
+           (map rec m)]
+          [(ast:pat:repeat r)
+           (printf "repeat: ~a\n" r)
+           (build-repeat-printer (rec r))]
+          [(ast:pat:datum d) d]))
+
+      ;; syntax/datum
+      ;; (require syntax/datum)
+      ;; (with-datum ([(ids ...) '(a b c)]
+      ;;              [(vals ...) '(1 2 3)]
+      ;;              [(types ...) '(n n n)])
+      ;;   (datum ((ids vals types) ...)))
+      ;; (with-datum ([id '(a b c)]))
+
+      ;; (printf "pat: ~a\n" (pretty-pattern node-pat))
+      ;; (printf "rec: ~a\n\n"  (syntax->datum ))
+      (build-printer (rec node-pat))
+      )
 
     (define (node-pat-format node-pat
                              (single (λ (v) #`,#,v))
@@ -86,35 +130,48 @@
           [((ast:pat:repeat r) rp)
            (repeat (rec r rp))]
           [((ast:pat:datum q) _) (datum q)]))
-      (rec node-pat (node-args node-pat)))
+      (node-pat-format^ node-pat)
+      ;; (rec node-pat (node-args node-pat))
+      )
 
     (define (node-writer var pat lineage)
       #`(define (write-proc struc port mode)
           (match-define (#,(full-id (cons var lineage)) #,@(flatten (node-args pat))) struc)
-          (display `#,(node-pat-format pat) port)))
+
+          (display #,(node-pat-format pat) port)
+          ))
 
     (define (build-defs lineage type)
       (match type
         [`(,groups ...)
-         #`(begin
-           #,@(map (curry build-defs lineage) groups))]
+         (flatten (map (curry build-defs lineage) groups))]
         [(ast:group name parent defs meta-info)
          (define nl (cons name (if parent (cons parent lineage) lineage)))
-         (printf "meta-info: ~a\n" meta-info)
+         ;; (printf "parent: ~a\n" (not (equal? parent #f)))
+         ;; (printf "meta-info: ~a\n" meta-info)
          (define attrs (map cdr (filter (λ (m) (equal? 'common (car m))) meta-info)))
-         (printf "attrs: ~a\n" attrs)
-         #`(begin
-             (struct #,(full-id nl) (#,@attrs))
-             ;; (build-group-reader lineage type)
-             #,@(map (curry build-defs nl) defs))]
+         ;; (printf "attrs: ~a\n" attrs)
+         (cons
+          (if (not (equal? parent #f))
+              #`(struct #,(full-id nl) ;; #,(full-id (cons parent lineage))
+                  (#,@attrs)
+                  )
+              #`(struct #,(full-id nl) (#,@attrs)))
+          ;; (build-group-reader lineage type)
+          (map (curry build-defs nl) defs))]
         [(ast:node var pat meta-info)
-         (build-node-defs var pat lineage)]))
+         (list (build-node-defs var pat lineage))]))
 
     (define (build-node-defs var pat lineage)
       #`(struct #,(full-id (cons var lineage)) #,(full-id lineage) #,(flatten (node-args pat))
-          ;; #:methods gen:custom-write (#,(node-writer var pat lineage))
+          #:methods gen:custom-write (#,(node-writer var pat lineage))
           ))
     )
+
+  ;; TODO
+  ;; * get parents of super group
+  ;; * use the common attributes in writer pattern
+  ;; * figure out the reader format with the node names
 
   (define-syntax (define-ast stx)
     (syntax-parse stx
@@ -122,11 +179,13 @@
        (define ast-spec (attribute gs.spec))
        ;; (pretty-display ast-spec)
        (define struct-defs (build-defs (list #'cid) ast-spec))
-       (pretty-display (syntax->datum struct-defs))
-       struct-defs])))
+       ;; (printf "struct-defs: ~a\n" struct-defs)
+       (pretty-display (map syntax->datum (flatten struct-defs)))
+       #`(begin (require syntax/datum) #,@struct-defs)])))
 
 (module test racket
   (require (submod ".." definer))
+  (require syntax/datum)
   #;
   (define-compiler LC
     (ast
@@ -139,17 +198,24 @@
 
 
   #;(define-ast c1
-    (ast
-     (terminal
-      [num n:native.number?]
-      [str str:native.string?]
-      [sym sym:native.symbol?])
-     (expression
-      [function ('lambda (arg:terminal.sym ...) body:expression)]
-      [app (rator:expression args:expression ...)]
-      [term t:terminal])))
+      (ast
+       (terminal
+        [num n:native.number?]
+        [str str:native.string?]
+        [sym sym:native.symbol?])
+       (expression
+        [function ('lambda (arg:terminal.sym ...) body:expression)]
+        [app (rator:expression args:expression ...)]
+        [term t:terminal])))
 
-  (define-ast sham
+  (define-ast test
+    (ast
+     [let
+         (((ids:terminal.sym vals:expr types:type)
+           ...)
+          stmt:stmt
+          expr:expr)]))
+  #;(define-ast sham
     (def
       [function      (arg-ids arg-types ret-type body)]
       [type          (type)]
@@ -170,7 +236,8 @@
            [symbol    id:terminal.sym]
            [intrinsic (id:terminal.sym return-type:type)]
            [external  (lib-id:terminal.sym id:terminal.sym ret-type:type)]
-           [racket    (id:terminal.sym racket-value:terminal.rkt full-type:type)])
+           [racket    (id:terminal.sym racket-value:terminal.rkt full-type:type)]
+           )
     (stmt ast
           [set!     (lhs:expr.var val:expr)]
           [if       (test:expr then:stmt else:stmt)]
@@ -190,8 +257,11 @@
           [var      id:terminal.sym]
           [global   (id:terminal.sym)]
           [external (lib-id:terminal.sym id:terminal.sym t:type)]
-          [let      ((ids:terminal.sym vals:expr types:type) ...
-                                                             stmt:stmt expr:expr)])
+          [let      (((ids:terminal.sym vals:expr types:type)
+                      ...)
+                     stmt:stmt
+                     expr:expr)]
+          )
     (const expr
            [fl     (value:terminal.float        type:type)]
            [si     (value:terminal.signed-int   type:type)]
