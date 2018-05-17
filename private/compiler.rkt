@@ -1,6 +1,5 @@
 #lang racket
 
-
 (module ast-syntax-structs racket
   (provide (all-defined-out))
 
@@ -38,7 +37,9 @@
 
   (define-splicing-syntax-class group-info
     (pattern (~seq (~datum #:common) v:expr)
-             #:attr as (cons 'common #'v)))
+             #:attr as (cons 'common #'v))
+        (pattern (~seq (~datum #:common-auto) v:expr)
+             #:attr as (cons 'common-auto #'v)))
   (define-syntax-class ast-group
     #:description "ast group specification"
     (pattern (name:id (~optional parent:id) nodes:ast-node ... meta:group-info ...)
@@ -73,100 +74,76 @@
           [(ast:pat:multiple m) (map rec m)]
           [(ast:pat:repeat r) (rec r)]
           [(ast:pat:datum _) '()]))
-      (rec node-pat))
+      (flatten (rec node-pat)))
 
-    (define (node-pat-format^ node-pat
-                              (single (λ (v) #`,#,v))
-                              (multiple (λ (vs) #`(#,@vs)))
-                              (repeat (λ (v) #`,@`#,v))
-                              (datum (λ (v) #`#,v)))
-      (define (build-repeat-printer lst)
-        (let ([g-vars (map (λ(v) (gensym 'g)) lst)])
-          #`(with-datum #,(for/list ([r lst]
-                                     [g g-vars])
-                            #`(( #,g #,(datum->syntax #'1 '...)) #,(build-printer r)))
-              (datum (#,g-vars  #,(datum->syntax #'1 '...))))))
-      (define (build-printer v)
-        (printf "build-printer: ~a\n" v)
-        (if (syntax? v)
-            v
-            #`(list #,@(map build-printer v))))
+    (define (meta-args meta-info #:common (cc identity) #:common-auto (ca identity))
+      (match meta-info
+        ['() '()]
+        [`((common . ,c) . ,rst) (cons (cc c) (meta-args rst))]
+        [`((common-auto . ,c) . ,rst) (cons (ca c) (meta-args rst))]
+        [else (meta-args (cdr meta-info))]))
 
-      (define (rec pat)
-        (match pat
-          [(ast:pat:single s)
-           (printf "single: ~a\n" (syntax->datum s)) s]
-          [(ast:pat:multiple m)
-           (printf "multiple: ~a\n" m)
-           (map rec m)]
-          [(ast:pat:repeat r)
-           (printf "repeat: ~a\n" r)
-           (build-repeat-printer (rec r))]
-          [(ast:pat:datum d) d]))
+    ;; (define (node-pat-format node-pat)
+    ;;   (define (build-repeat-printer lst)
+    ;;     (if (list? lst)
+    ;;         (let ([g-vars (map (λ(v) (gensym 'g)) lst)])
+    ;;           #`(with-datum #,(for/list ([r lst]
+    ;;                                      [g g-vars])
+    ;;                             #`(( #,g #,(datum->syntax #'1 '...)) #,(build-printer r)))
+    ;;               (datum (#,g-vars  #,(datum->syntax #'1 '...)))))
+    ;;         #``,@`#,(build-printer lst)))
+    ;;   (define (build-printer v)
+    ;;     (if (syntax? v)
+    ;;         #`,#,v
+    ;;         #`(#,@(map build-printer v))))
+    ;;   (define (rec pat)
+    ;;     (match pat
+    ;;       [(ast:pat:single s) s]
+    ;;       [(ast:pat:multiple m) (map rec m)]
+    ;;       [(ast:pat:repeat r) (build-repeat-printer (rec r))]
+    ;;       [(ast:pat:datum d) d]))
+    ;;   (build-printer (rec node-pat)))
 
-      ;; syntax/datum
-      ;; (require syntax/datum)
-      ;; (with-datum ([(ids ...) '(a b c)]
-      ;;              [(vals ...) '(1 2 3)]
-      ;;              [(types ...) '(n n n)])
-      ;;   (datum ((ids vals types) ...)))
-      ;; (with-datum ([id '(a b c)]))
-
-      ;; (printf "pat: ~a\n" (pretty-pattern node-pat))
-      ;; (printf "rec: ~a\n\n"  (syntax->datum ))
-      (build-printer (rec node-pat))
-      )
-
-    (define (node-pat-format node-pat
-                             (single (λ (v) #`,#,v))
-                             (multiple (λ (vs) #`(#,@vs)))
-                             (repeat (λ (v) #`,@`#,v))
-                             (datum (λ (v) #`#,v)))
-      (define (rec pat args)
-        (match* (pat args)
-          [((ast:pat:single s) p) (single p)]
-          [((ast:pat:multiple ms) mps)
-           (multiple (map rec ms mps))]
-          [((ast:pat:repeat r) rp)
-           (repeat (rec r rp))]
-          [((ast:pat:datum q) _) (datum q)]))
-      (node-pat-format^ node-pat)
-      ;; (rec node-pat (node-args node-pat))
-      )
-
-    (define (node-writer var pat lineage)
-      #`(define (write-proc struc port mode)
-          (match-define (#,(full-id (cons var lineage)) #,@(flatten (node-args pat))) struc)
-
-          (display #,(node-pat-format pat) port)
-          ))
-
-    (define (build-defs lineage type)
-      (match type
+    (define (build-group-map spec)
+      (match spec
         [`(,groups ...)
-         (flatten (map (curry build-defs lineage) groups))]
-        [(ast:group name parent defs meta-info)
-         (define nl (cons name (if parent (cons parent lineage) lineage)))
-         ;; (printf "parent: ~a\n" (not (equal? parent #f)))
-         ;; (printf "meta-info: ~a\n" meta-info)
-         (define attrs (map cdr (filter (λ (m) (equal? 'common (car m))) meta-info)))
-         ;; (printf "attrs: ~a\n" attrs)
-         (cons
-          (if (not (equal? parent #f))
-              #`(struct #,(full-id nl) ;; #,(full-id (cons parent lineage))
-                  (#,@attrs)
-                  )
-              #`(struct #,(full-id nl) (#,@attrs)))
-          ;; (build-group-reader lineage type)
-          (map (curry build-defs nl) defs))]
-        [(ast:node var pat meta-info)
-         (list (build-node-defs var pat lineage))]))
-
-    (define (build-node-defs var pat lineage)
-      #`(struct #,(full-id (cons var lineage)) #,(full-id lineage) #,(flatten (node-args pat))
-          #:methods gen:custom-write (#,(node-writer var pat lineage))
-          ))
-    )
+         (map build-group-map groups)]
+        [(ast:group name _ _ meta-info)
+         (cons (syntax->datum name) spec)]))
+    (define (build-defs top spec)
+      (define group-map (make-hash (build-group-map spec)))
+      (define (get-group-spec group-id)
+        (if group-id (hash-ref group-map (syntax->datum group-id)) #f))
+      (define (group-id spec)
+        (match spec
+          [#f top]
+          [(ast:group name parent _ _)
+           (format-id top "~a:~a" (group-id (get-group-spec parent)) name)]))
+      (define (group-args group-spec)
+        (match-define (ast:group id parent node meta-info) group-spec)
+        (append (if parent (group-args (hash-ref group-map (syntax->datum parent))) empty) (meta-args meta-info)))
+      (define (group-def group-spec)
+        (match-define (ast:group name parent node-specs meta-info) group-spec)
+        (printf "group-definition: ~a\n" name)
+        (define args (meta-args meta-info #:common-auto (λ (v) #`(#,v #:auto))))
+        (cons
+         (if parent
+             #`(struct #,(group-id group-spec) #,(group-id [get-group-spec parent])
+                 (#,@args))
+             #`(struct #,(group-id group-spec) (#,@args)))
+         ;; (group-reader lineage type)
+         (map (curry node-def group-spec) node-specs)))
+      (define (node-def group-spec node-spec)
+        (match-define (ast:node var pat meta-info) node-spec)
+        (define node-id (format-id var "~a:~a" (group-id group-spec) var))
+        (define writer-args  (append (node-args pat) (group-args group-spec)) )
+        #`(struct #,node-id #,(group-id group-spec) (node-args pat)
+            ;; #:methods gen:custom-write
+            ;; (#`(define (write-proc struc port mode)
+            ;;      (match-define (#,(full-id (cons var lineage)) #,@(flatten (node-args pat))) struc)
+            ;;      (display `#,(node-pat-format pat) port)))
+            ))
+      (flatten (map group-def spec))))
 
   ;; TODO
   ;; * get parents of super group
@@ -177,8 +154,8 @@
     (syntax-parse stx
       [(_ cid:id gs:ast-spec)
        (define ast-spec (attribute gs.spec))
-       ;; (pretty-display ast-spec)
-       (define struct-defs (build-defs (list #'cid) ast-spec))
+
+       (define struct-defs (build-defs #'cid ast-spec))
        ;; (printf "struct-defs: ~a\n" struct-defs)
        (pretty-display (map syntax->datum (flatten struct-defs)))
        #`(begin (require syntax/datum) #,@struct-defs)])))
@@ -208,22 +185,16 @@
         [app (rator:expression args:expression ...)]
         [term t:terminal])))
 
-  (define-ast test
-    (ast
-     [let
-         (((ids:terminal.sym vals:expr types:type)
-           ...)
-          stmt:stmt
-          expr:expr)]))
-  #;(define-ast sham
+
+  (define-ast sham
     (def
       [function      (arg-ids arg-types ret-type body)]
       [type          (type)]
       [global        (type)]
       [global-string (str)]
-      #:common [info #:mutable])
+      #:common info)
     (ast
-     #:common [metadata #:auto #:mutable])
+     #:common-auto metadata)
     (type ast
           [internal ()]
           [ref      (to)]
@@ -260,8 +231,7 @@
           [let      (((ids:terminal.sym vals:expr types:type)
                       ...)
                      stmt:stmt
-                     expr:expr)]
-          )
+                     expr:expr)])
     (const expr
            [fl     (value:terminal.float        type:type)]
            [si     (value:terminal.signed-int   type:type)]
