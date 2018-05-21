@@ -38,7 +38,9 @@
   (define-splicing-syntax-class group-info
     (pattern (~seq (~datum #:common) v:expr)
              #:attr as (cons 'common #'v))
-        (pattern (~seq (~datum #:common-auto) v:expr)
+    (pattern (~seq (~datum #:common-mutable) v:expr)
+             #:attr as (cons 'common-mutable #'v))
+    (pattern (~seq (~datum #:common-auto) v:expr)
              #:attr as (cons 'common-auto #'v)))
   (define-syntax-class ast-group
     #:description "ast group specification"
@@ -76,15 +78,18 @@
           [(ast:pat:datum _) '()]))
       (flatten (rec node-pat)))
 
-    (define (meta-args meta-info #:common (cc identity) #:common-auto (ca identity))
+    (define (meta-args meta-info
+                       #:common (cc identity)
+                       #:common-auto (ca identity)
+                       #:common-mutable (cm identity))
       (match meta-info
         ['() '()]
         [`((common . ,c) . ,rst) (cons (cc c) (meta-args rst))]
         [`((common-auto . ,c) . ,rst) (cons (ca c) (meta-args rst))]
+        [`((common-mutable . ,c) . ,rst) (cons (cm c) (meta-args rst))]
         [else (meta-args (cdr meta-info))]))
 
     (define (node-pat-format var node-pat)
-      (printf "node-pat-format: ~a\n" node-pat)
       (define (build-repeat-printer lst)
         (if (list? lst)
             (let ([g-vars (map (λ(v) (gensym 'g)) lst)])
@@ -132,8 +137,10 @@
                 (meta-args meta-info)))
       (define (group-def group-spec)
         (match-define (ast:group name parent node-specs meta-info) group-spec)
-        (printf "group-definition: ~a\n" name)
-        (define args (meta-args meta-info #:common-auto (λ (v) #`(#,v #:auto))))
+        ;; (printf "group-definition: ~a\n" name)
+        (define args (meta-args meta-info
+                                #:common-auto (λ (v) #`(#,v #:auto))
+                                #:common-mutable (λ (v) #`(#,v #:mutable))))
         (cons
          (if parent
              #`(struct #,(group-id group-spec) #,(group-id [get-group-spec parent])
@@ -163,7 +170,7 @@
        (define ast-spec (attribute gs.spec))
        (define struct-defs (build-defs #'cid ast-spec))
        ;; (printf "struct-defs: ~a\n" struct-defs)
-       (pretty-display (map syntax->datum (flatten struct-defs)))
+       ;; (pretty-display (map syntax->datum (flatten struct-defs)))
        #`(begin (require syntax/datum) #,@struct-defs)])))
 
 (module test racket
@@ -201,21 +208,23 @@
 
   (define-ast sham
     (def
-      [function      (arg-ids arg-types ret-type body)]
-      [type          (type)]
-      [global        (type)]
-      [global-string (str)]
-      #:common info)
+      [module        (defs:def ...)]
+      [function      ((arg-ids:terminal.sym arg-types:type) ... ret-type:type body:stmt)]
+      [type          (type:type)]
+      [global        (type:type)]
+      [global-string (str:terminal.string)]
+      #:common-mutable info
+      #:common id:terminal.sym)
     (ast
      #:common-auto metadata)
     (type ast
           [internal ()]
-          [ref      (to)]
-          [struct   ((fields types) ...)]
-          [function (args ret)]
-          [pointer  (to)]
-          [array    (of size)]
-          [vector   (of size)])
+          [ref      (to:terminal.sym)]
+          [struct   ((fields:terminal.sym types:type) ...)]
+          [function (args:type ... '-> ret:type)]
+          [pointer  (to:type)]
+          [array    (of:type size:terminal.unsigned-int)]
+          [vector   (of:type size:terminal.unsigned-nt)])
     (rator ast
            [symbol    id:terminal.sym]
            [intrinsic (id:terminal.sym return-type:type)]
