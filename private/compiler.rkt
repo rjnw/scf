@@ -172,13 +172,13 @@
                 (info-args meta-info)))
       (define (group-def group-spec)
         (match-define (ast:group name parent node-specs meta-info) group-spec)
-        (printf "\n\ngroup: ~a\n" (syntax->datum name))
+        ;; (printf "\n\ngroup: ~a\n" (syntax->datum name))
         (define args (meta-args meta-info
                                 #:common-auto (λ (v) #`(#,v #:auto))
                                 #:common-mutable (λ (v) #`(#,v #:mutable))))
-        (printf "meta-args: ~a\n" args)
+        ;; (printf "meta-args: ~a\n" args)
         (define parent-args (group-args group-spec))
-        (printf "parent-args: ~a\n" parent-args)
+        ;; (printf "parent-args: ~a\n" parent-args)
         (define group-reader
           (let ([farg (first (generate-temporaries (list name)))])
             #`(define (#,(format-id name "$~a:~a" top name) #,farg)
@@ -203,7 +203,7 @@
                                       #`(#,(format-id top "$~a:~a" top (get-type n)) #,n))
                                     (node-args node-pattern)))))
                       (list #`(else #,farg)))))))
-        (printf "group-reader:\n" )(pretty-display (syntax->datum group-reader))
+        ;; (printf "group-reader:\n" )(pretty-display (syntax->datum group-reader))
         (define (node-def node-spec)
           (match-define (ast:node var pat meta-info) node-spec)
           (define node-id (format-id var "~a:~a" (group-id group-spec) var))
@@ -238,8 +238,10 @@
        ;; (printf "struct-defs: ~a\n" struct-defs)
        ;; (pretty-display (map syntax->datum (flatten struct-defs)))
        #`(begin (require syntax/datum) #,@struct-defs)])))
+(require (submod "." definer))
+(provide define-ast)
 
-(module test racket
+(module+ test
   (require (submod ".." definer))
   ;; (require syntax/datum)
   #;
@@ -337,6 +339,5 @@
               [llvm llvm?]
               [struct sham-struct?]
               [array sham-array?]
-              [vector sham-vector?])
-    )
+              [vector sham-vector?]))
   (pretty-display (sham:ast:expr:let '(a b c) '(1 2 3) '(x y z) 's 'e)))
