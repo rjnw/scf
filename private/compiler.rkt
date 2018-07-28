@@ -37,11 +37,13 @@
 
   (define-splicing-syntax-class group-info
     (pattern (~seq (~datum #:common) v:expr)
-             #:attr as (cons 'common #'v))
+             #:attr as (cons '(common) #'v))
     (pattern (~seq (~datum #:common-mutable) v:expr)
-             #:attr as (cons 'common-mutable #'v))
+             #:attr as (cons '(common mutable) #'v))
     (pattern (~seq (~datum #:common-auto) v:expr)
-             #:attr as (cons 'common-auto #'v)))
+             #:attr as (cons '(common auto) #'v))
+    (pattern (~seq (~datum #:terminals) nodes:ast-node ...)
+             #:attr as (cons '(terminals) (attribute nodes.spec))))
   (define-syntax-class ast-group
     #:description "ast group specification"
     (pattern (name:id (~optional parent:id) nodes:ast-node ... meta:group-info ...)
@@ -79,26 +81,40 @@
     (define (strip-single s)
       (define splt (string-split (symbol->string (syntax->datum s)) ":"))
       (datum->syntax s (string->symbol (car splt))))
+    (define (get-type s)
+      (define ss (symbol->string (syntax->datum s)))
+      (define t (string-split (second (string-split ss ":")) "."))
+      (datum->syntax s (string->symbol (first t))))
+
+    (define (info-args meta-info)
+      (match meta-info
+        ['() '()]
+        [`(((common) . ,c) . ,rst) (cons (car meta-info) (info-args rst))]
+        [`(((common auto) . ,c) . ,rst) (cons (car meta-info) (info-args rst))]
+        [`(((common mutable) . ,c) . ,rst) (cons (car meta-info) (info-args rst))]
+        [else (meta-args (cdr meta-info))]))
 
     (define (meta-args meta-info
                        #:common (cc identity)
                        #:common-auto (ca identity)
                        #:common-mutable (cm identity))
-      (match meta-info
-        ['() '()]
-        [`((common . ,c) . ,rst) (cons (cc c) (meta-args rst))]
-        [`((common-auto . ,c) . ,rst) (cons (ca c) (meta-args rst))]
-        [`((common-mutable . ,c) . ,rst) (cons (cm c) (meta-args rst))]
-        [else (meta-args (cdr meta-info))]))
+      (define (rec mi)
+        (match mi
+          ['() '()]
+          [`(((common) . ,c) . ,rst) (cons (cc c) (rec rst))]
+          [`(((common auto) . ,c) . ,rst) (cons (ca c) (rec rst))]
+          [`(((common mutable) . ,c) . ,rst) (cons (cm c) (rec rst))]
+          [else (meta-args (cdr meta-info))]))
+      (rec meta-info))
 
-    (define (node-pat-format var node-pat)
+    (define (node-pat-format var node-pat) ;; TODO: cleanup
       (define (build-repeat-printer lst)
         (if (list? lst)
             (let ([g-vars (map (λ(v) (gensym 'g)) lst)])
               #`,@(with-datum #,(for/list ([r lst]
                                            [g g-vars])
-                                  #`(( #,g #,(datum->syntax #'1 '...)) `#,(build-printer r)))
-                    (datum (#,g-vars  #,(datum->syntax #'1 '...)))))
+                                  #`(( #,g #,(datum->syntax #'42 '...)) `#,(build-printer r)))
+                    (datum (#,g-vars  #,(datum->syntax #'42 '...)))))
             #`,@`#,(build-printer lst)))
       (define (build-printer v)
         (if (syntax? v)
@@ -117,22 +133,20 @@
       (if (ast:pat:multiple? node-pat)
           #``(#,var ,@`#,p)
           #``#,p))
+
     (define (node-reader-pattern pattern)
       (match pattern
-        [(ast:pat:single s)  #`,#,(strip-single s)]
+        [(ast:pat:single s)  #`,#,s]
         [(ast:pat:multiple m)
-         (define ret
-           (for/fold ([out '()]
-                      #:result (reverse out))
-                     ([p m])
-             (match p
-               [(ast:pat:repeat r) (append (reverse (node-reader-pattern p)) out)]
-               [else (cons (node-reader-pattern p) out)])))
-         #`(#,@ret)]
+         #`(#,@(foldr (λ (p v)
+                        (match p
+                          [(ast:pat:repeat r) (append (node-reader-pattern p) v)]
+                          [else (cons (node-reader-pattern p) v)]))
+                      '()
+                      m))]
         [(ast:pat:repeat r)
-         (list (node-reader-pattern r) (datum->syntax #'1 '...))]
+         (list (node-reader-pattern r) (datum->syntax #'42 '...))]
         [(ast:pat:datum d) d]))
-
 
     (define (build-defs top spec)
       (define (build-group-map spec)
@@ -155,7 +169,7 @@
       (define (group-args group-spec)
         (match-define (ast:group id parent node meta-info) group-spec)
         (append (if parent (group-args (hash-ref group-map (syntax->datum parent))) empty)
-                (meta-args meta-info)))
+                (info-args meta-info)))
       (define (group-def group-spec)
         (match-define (ast:group name parent node-specs meta-info) group-spec)
         (printf "\n\ngroup: ~a\n" (syntax->datum name))
@@ -169,21 +183,31 @@
           (let ([farg (first (generate-temporaries (list name)))])
             #`(define (#,(format-id name "$~a:~a" top name) #,farg)
                 (match #,farg
-                  #,@(for/list ([node-spec node-specs])
-                       (match-define (ast:node node-variable node-pattern node-meta-info) node-spec)
-                       (printf "node-reader-pattern: ~a\n" (syntax->datum node-variable))
-                       (define clean-parent-args (map strip-single parent-args))
-                       (pretty-display
-                        (syntax->datum
-                         #`(`(#,node-variable #,@(map (λ (v) #`,#,v) clean-parent-args) #,@(node-reader-pattern node-pattern))
-                            (#,(node-id node-spec group-spec) #,@clean-parent-args #,@(map strip-single (node-args node-pattern))))))
-                       #`(`(#,node-variable #,@(map (λ (v) #`,#,v) clean-parent-args) #,@(node-reader-pattern node-pattern))
-                          (#,(node-id node-spec group-spec) #,@clean-parent-args #,@(map strip-single (node-args node-pattern)))))))))
+                  #,@(append
+                      (for/list ([node-spec node-specs])
+                        (match-define (ast:node node-variable node-pattern node-meta-info) node-spec)
+                        (define clean-parent-args
+                          (map (compose strip-single cdr)
+                               (filter (λ (v) (not (member 'auto (car v)))) parent-args)))
+                        (define match-pat
+                          (match node-pattern
+                            [(ast:pat:single s) s]
+                            [else
+                             #``(#,node-variable
+                                 #,@(map (λ (v) #`,#,v) clean-parent-args)
+                                 #,@(node-reader-pattern node-pattern))]))
+                        #`(#,match-pat
+                           (#,(node-id node-spec group-spec)
+                            #,@clean-parent-args
+                            #,@(map (λ (n)
+                                      #`(#,(format-id top "$~a:~a" top (get-type n)) #,n))
+                                    (node-args node-pattern)))))
+                      (list #`(else #,farg)))))))
         (printf "group-reader:\n" )(pretty-display (syntax->datum group-reader))
         (define (node-def node-spec)
           (match-define (ast:node var pat meta-info) node-spec)
           (define node-id (format-id var "~a:~a" (group-id group-spec) var))
-          (define writer-args  (append parent-args (node-args pat)))
+          (define writer-args  (append (map cdr parent-args) (node-args pat)))
           #`(struct #,node-id #,(group-id group-spec) #,(node-args pat)
               #:methods gen:custom-write
               ((define (write-proc struc port mode)
@@ -198,7 +222,7 @@
          (cons group-reader
                (map node-def node-specs))))
       (define ret (flatten (map group-def spec)))
-      (pretty-print (map syntax->datum ret))
+      ;; (pretty-print (map syntax->datum ret))
       ret))
 
   ;; TODO
@@ -275,7 +299,7 @@
     (stmt ast
           [set!     (lhs:expr.var val:expr)]
           [if       (test:expr then:stmt else:stmt)]
-          [switch   (test:expr (check:expr body:stmt) ... default)]
+          [switch   (test:expr (check:expr body:stmt) ... default:expr)]
           [break    ()]
           [while    (test:expr body:stmt)]
           [return   (value:expr)]
@@ -304,18 +328,15 @@
            [struct (value:terminal.struct       type:type)]
            [array  (value:terminal.array        type:type)]
            [vector (value:terminal.vector       type:type)])
-    ;; (terminal value
-    ;;           #:terminals
-    ;;           [sym symbol?]
-    ;;           [float fixnum?]
-    ;;           [signed-int exact-integer?]
-    ;;           [unsigned-int exact-nonnegative-integer?]
-    ;;           [string sham-string?]
-    ;;           [llvm llvm?]
-    ;;           [struct sham-struct?]
-    ;;           [array sham-array?]
-    ;;           [vector sham-vector?]
-
-    ;;           )
+    (terminal #:terminals
+              [sym symbol?]
+              [float fixnum?]
+              [signed-int exact-integer?]
+              [unsigned-int exact-nonnegative-integer?]
+              [string sham-string?]
+              [llvm llvm?]
+              [struct sham-struct?]
+              [array sham-array?]
+              [vector sham-vector?])
     )
   (pretty-display (sham:ast:expr:let '(a b c) '(1 2 3) '(x y z) 's 'e)))
