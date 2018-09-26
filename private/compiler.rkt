@@ -212,12 +212,12 @@
         ;; (printf "group-reader:\n" )(pretty-display (syntax->datum group-reader))
         (define (node-def node-spec)
           (match-define (ast:node var pat meta-info) node-spec)
-          (define node-id (format-id var "~a:~a" (group-id group-spec) var))
+          (define id (node-id node-spec group-spec))
           (define writer-args  (append (map cdr parent-args) (node-args pat)))
-          #`(struct #,node-id #,(group-id group-spec) #,(node-args pat)
+          #`(struct #,id #,(group-id group-spec) #,(node-args pat)
               #:methods gen:custom-write
               ((define (write-proc struc port mode)
-                 (match-define (#,node-id #,@writer-args) struc)
+                 (match-define (#,id #,@writer-args) struc)
                  (display #,(node-pat-format var pat) port)))))
         (cons
          (if parent
@@ -241,8 +241,8 @@
       [(_ cid:id gs:ast-spec)
        (define ast-spec (attribute gs.spec))
        (define struct-defs (build-defs #'cid ast-spec))
-       ;; (printf "struct-defs: ~a\n" struct-defs)
-       ;; (pretty-display (map syntax->datum (flatten struct-defs)))
+       (printf "struct-defs: ~a\n" struct-defs)
+       (pretty-display (map syntax->datum (flatten struct-defs)))
        #`(begin (require syntax/datum) #,@struct-defs)])))
 
 (require (submod "." definer))
