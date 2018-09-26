@@ -175,6 +175,11 @@
         (match-define (ast:group id parent node meta-info) group-spec)
         (append (if parent (group-args (hash-ref group-map (syntax->datum parent))) empty)
                 (info-args meta-info)))
+      (define (group-terminals meta-info)
+        (match meta-info
+          [`() #f]
+          [`(((terminals) . ,terminals) . ,rst) terminals]
+          [else (group-terminals (cdr meta-info))]))
       (define (group-def group-spec)
         (match-define (ast:group name parent node-specs meta-info) group-spec)
         ;; (printf "\n\ngroup: ~a\n" (syntax->datum name))
@@ -182,9 +187,7 @@
                                 #:common-auto (λ (v) #`(#,v #:auto))
                                 #:common-mutable (λ (v) #`(#,v #:mutable))
                                 #:common-auto-mutable (λ (v) #`(#,v #:auto #:mutable))))
-        ;; (printf "meta-args: ~a\n" args)
         (define parent-args (group-args group-spec))
-        ;; (printf "parent-args: ~a\n" parent-args)
         (define group-reader
           (let ([farg (first (generate-temporaries (list name)))])
             #`(define (#,(format-id name "$~a:~a" top name) #,farg)
@@ -208,8 +211,19 @@
                             #,@(map (λ (n)
                                       #`(#,(format-id top "$~a:~a" top (get-type n)) #,n))
                                     (node-args node-pattern)))))
-                      (list #`(else #,farg)))))))
-        ;; (printf "group-reader:\n" )(pretty-display (syntax->datum group-reader))
+                      (if (group-terminals meta-info)
+                          (for/list ([terminal (group-terminals meta-info)])
+                            (match-define (ast:node id pat meta-info) terminal)
+                            (match-define (ast:pat:single fcheck) pat)
+                            #`(#,id #:when (#,fcheck #,id) #,id))
+                          '())
+                      (list
+                       (let ([x (first (generate-temporaries '(x)))])
+                         #`(#,x #:when (#,(format-id name "~a?" (group-id group-spec))
+                                        #,x) #,x))
+                       #`(else (error #,(format "error parsing ~a, given: "
+                                                (symbol->string (syntax->datum (group-id group-spec))))
+                                      #,farg))))))))
         (define (node-def node-spec)
           (match-define (ast:node var pat meta-info) node-spec)
           (define id (node-id node-spec group-spec))
@@ -241,6 +255,7 @@
       [(_ cid:id gs:ast-spec)
        (define ast-spec (attribute gs.spec))
        (define struct-defs (build-defs #'cid ast-spec))
+       (pretty-display ast-spec)
        (printf "struct-defs: ~a\n" struct-defs)
        (pretty-display (map syntax->datum (flatten struct-defs)))
        #`(begin (require syntax/datum) #,@struct-defs)])))
