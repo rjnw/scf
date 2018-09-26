@@ -193,8 +193,24 @@
             #`(define (#,(format-id name "$~a:~a" top name) #,farg)
                 (match #,farg
                   #,@(append
+                      (list
+                       (let ([x (first (generate-temporaries '(x)))])
+                         #`(#,x #:when (#,(format-id name "~a?" (group-id group-spec))
+                                        #,x) #,x)))
                       (for/list ([node-spec node-specs])
+
                         (match-define (ast:node node-variable node-pattern node-meta-info) node-spec)
+                        (printf "group-reader: node-pattern: ~a\n" node-pattern)
+                        (define (node-spec-sub-calls node-pattern (repeat 0))
+                          ;; TODO figure out nested repeats
+                          (match node-pattern
+                            [(ast:pat:single s)
+                             (match repeat
+                               [0 #`(#,(format-id top "$~a:~a" top (get-type s)) #,s)]
+                               [1 #`(map #,(format-id top "$~a:~a" top (get-type s)) #,s)])]
+                            [(ast:pat:multiple s) (map (curryr node-spec-sub-calls repeat) s)]
+                            [(ast:pat:repeat s) (node-spec-sub-calls s (add1 repeat))]
+                            [(ast:pat:datum s) '()]))
                         (define clean-parent-args
                           (map (compose strip-single cdr)
                                (filter (λ (v) (not (member 'auto (car v)))) parent-args)))
@@ -208,9 +224,11 @@
                         #`(#,match-pat
                            (#,(node-id node-spec group-spec)
                             #,@clean-parent-args
-                            #,@(map (λ (n)
-                                      #`(#,(format-id top "$~a:~a" top (get-type n)) #,n))
-                                    (node-args node-pattern)))))
+                            #,@ (flatten (node-spec-sub-calls node-pattern 0))
+                            ;; #,@(map (λ (n)
+                            ;;           #`(#,(format-id top "$~a:~a" top (get-type n)) #,n))
+                            ;;         (node-args node-pattern))
+                            )))
                       (if (group-terminals meta-info)
                           (for/list ([terminal (group-terminals meta-info)])
                             (match-define (ast:node id pat meta-info) terminal)
@@ -218,12 +236,12 @@
                             #`(#,id #:when (#,fcheck #,id) #,id))
                           '())
                       (list
-                       (let ([x (first (generate-temporaries '(x)))])
-                         #`(#,x #:when (#,(format-id name "~a?" (group-id group-spec))
-                                        #,x) #,x))
+
                        #`(else (error #,(format "error parsing ~a, given: "
                                                 (symbol->string (syntax->datum (group-id group-spec))))
                                       #,farg))))))))
+        (pretty-display (syntax->datum group-reader))
+
         (define (node-def node-spec)
           (match-define (ast:node var pat meta-info) node-spec)
           (define id (node-id node-spec group-spec))
