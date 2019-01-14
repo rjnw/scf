@@ -1,9 +1,6 @@
 #lang racket
 (require "../private/compiler.rkt")
 
-
-
-
 (define-ast sham
   (def
     [module        (defs:def ...)]
@@ -39,7 +36,7 @@
         [expr     (e:expr)]
         [block    (stmts:stmt ...)])
   (expr ast
-        [app      (rator:expr rands:expr ...)]
+        [app      (rator:rator rands:expr ...)]
         [evoid     ()]
         [sizeof   (t:type)]
         [etype    (t:type)]
@@ -79,38 +76,20 @@
 
 (pretty-display (sham:ast:expr:let '(a b c) '(1 2 3) '(x y z) 's 'e))
 (pretty-display ($sham:expr `(let ([a 1 (ref i32)] [b 2 (ref i32)] [c 3 (ref i32)]) (svoid) ,(sham:ast:expr:let '(a b c) '(1 2 3) '(x y z) 's 'e))))
-;; (module+ test
-;;   (require (submod ".." definer))
-;;   ;; (require syntax/datum)
-;;   #;
-;;   (define-compiler LC
-;;     (ast
-;;      (expression
-;;       [function ('lambda (arg:terminal.sym) body:expression)]
-;;       [app (rator:expression rand:expression)]
-;;       [term sym:native.symbol?]))
-;;     (language
-;;      (l1 (expression *))))
 
+;; (define get-signal
+;;   (s$:dfunction
+;;    (void) 'get-signal
+;;    '(cblock index)
+;;    (list s$:f32* s$:i32) s$:f32
+;;    (s$:ret (load-signal (s$:v 'cblock) (s$:v 'index)))))
 
-;;   #;(define-ast c1
-;;       (ast
-;;        (terminal
-;;         [num n:native.number?]
-;;         [str str:native.string?]
-;;         [sym sym:native.symbol?])
-;;        (expression
-;;         [function ('lambda (arg:terminal.sym ...) body:expression)]
-;;         [app (rator:expression args:expression ...)]
-;;         [term t:terminal])))
-
-;;   ;; (define-ast sham
-;;   ;;   (ast:expr
-;;   ;;         [let      (((ids:terminal.sym vals:expr types:type)
-;;   ;;                     ...)
-;;   ;;                    stmt:stmt
-;;   ;;                    expr:expr)]
-;;   ;;    ))
-
-
-;; )
+(define get-signal-simple
+  ($sham:def
+   `(function
+     ,(void) get-signal
+     (cblock (pointer (ref f32))) (index (ref i32))
+     (ref f32)
+     (return (app load-signal cblock index)))))
+(define (load-signal s i)
+  (s$:load (s$:gep^ s i)))

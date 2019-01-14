@@ -1,69 +1,13 @@
 #lang racket
 
-(module ast-syntax-structs racket
-  (provide (all-defined-out))
-
-  (struct ast:group (name parent nodes meta-info) #:prefab)
-  (struct ast:node (variable pattern meta-info) #:prefab)
-  (struct ast:pat:single   (spec) #:prefab)
-  (struct ast:pat:datum    (spec) #:prefab)
-  (struct ast:pat:multiple (spec) #:prefab)
-  (struct ast:pat:repeat   (spec) #:prefab))
-
-(module ast-stxclass racket
-  (require syntax/parse)
-  (provide ast-spec language-spec)
-  (require (submod ".." ast-syntax-structs))
-
-  (define-syntax-class node-pattern
-    (pattern single:id
-             #:attr spec (ast:pat:single #'single))
-    (pattern ((~datum quote) datum:id)
-             #:attr spec (ast:pat:datum #'datum))
-    (pattern (multiple:node-multiple-pattern ...)
-             #:attr spec (ast:pat:multiple (attribute multiple.spec))))
-  (define-splicing-syntax-class node-multiple-pattern
-    (pattern (~seq repeat:node-pattern (~datum ...))
-             #:attr spec (ast:pat:repeat (attribute repeat.spec)))
-    (pattern ms:node-pattern
-             #:attr spec (attribute ms.spec)))
-
-  (define-splicing-syntax-class node-info
-    (pattern (~seq (~datum #:attr) v:expr)
-             #:attr as (cons 'attr #'v)))
-  (define-syntax-class ast-node
-    (pattern (var:id def:node-pattern info:node-info ...)
-             #:attr spec (ast:node #'var (attribute def.spec) (attribute info.as))))
-
-  (define-splicing-syntax-class group-info
-    (pattern (~seq (~datum #:common) v:expr)
-             #:attr as (cons '(common) #'v))
-    (pattern (~seq (~datum #:common-mutable) v:expr)
-             #:attr as (cons '(common mutable) #'v))
-    (pattern (~seq (~datum #:common-auto) v:expr)
-             #:attr as (cons '(common auto) #'v))
-    (pattern (~seq (~datum #:common-auto-mutable) v:expr)
-             #:attr as (cons '(common auto mutable) #'v))
-    (pattern (~seq (~datum #:terminals) nodes:ast-node ...)
-             #:attr as (cons '(terminals) (attribute nodes.spec))))
-  (define-syntax-class ast-group
-    #:description "ast group specification"
-    (pattern (name:id (~optional parent:id) nodes:ast-node ... meta:group-info ...)
-             #:attr spec (ast:group #'name (attribute parent) (attribute nodes.spec) (attribute meta.as))))
-  (define-splicing-syntax-class ast-spec
-    (pattern (~seq groups:ast-group ...)
-             #:attr spec (attribute groups.spec)))
-
-  (define-syntax-class language-spec
-    #:description "language specification"
-    (pattern (lang:id (name:id var:id ...) ...))))
-
 (module definer racket
-  (require (for-syntax (submod ".." ast-stxclass)
-                       (submod ".." ast-syntax-structs)
-                       syntax/parse
-                       racket/syntax
-                       racket/pretty))
+  (require
+   (for-syntax
+    "ast-syntax-structs.rkt"
+    "ast-syntax-class.rkt"
+    syntax/parse
+    racket/syntax
+    racket/pretty))
 
   (provide define-ast)
 
@@ -200,7 +144,7 @@
                       (for/list ([node-spec node-specs])
 
                         (match-define (ast:node node-variable node-pattern node-meta-info) node-spec)
-                        (printf "group-reader: node-pattern: ~a\n" node-pattern)
+                        ;; (printf "group-reader: node-pattern: ~a\n" node-pattern)
                         (define (node-spec-sub-calls node-pattern (repeat 0))
                           ;; TODO figure out nested repeats
                           (match node-pattern
@@ -240,28 +184,36 @@
                        #`(else (error #,(format "error parsing ~a, given: "
                                                 (symbol->string (syntax->datum (group-id group-spec))))
                                       #,farg))))))))
-        (pretty-display (syntax->datum group-reader))
+        ;; (pretty-display (syntax->datum group-reader))
 
         (define (node-def node-spec)
           (match-define (ast:node var pat meta-info) node-spec)
           (define id (node-id node-spec group-spec))
           (define writer-args  (append (map cdr parent-args) (node-args pat)))
           #`(struct #,id #,(group-id group-spec) #,(node-args pat)
-              #:methods gen:custom-write
-              ((define (write-proc struc port mode)
-                 (match-define (#,id #,@writer-args) struc)
-                 (display #,(node-pat-format var pat) port)))))
+              ;; #:methods gen:custom-write
+              ;; ((define (write-proc struc port mode)
+              ;;    (match-define (#,id #,@writer-args) struc)
+              ;;    (display #,(node-pat-format var pat) port)))
+              ))
         (cons
          (if parent
              #`(struct #,(group-id group-spec) #,(group-id (get-group-spec parent))
                  (#,@args))
              #`(struct #,(group-id group-spec)
                  (#,@args)))
-         (cons group-reader
-               (map node-def node-specs))))
+         (map node-def node-specs)
+         ;; (cons group-reader
+         ;;       (map node-def node-specs))
+         ))
       (define ret (flatten (map group-def spec)))
-      ;; (pretty-print (map syntax->datum ret))
-      ret))
+      (pretty-print (map syntax->datum ret))
+      ret)
+
+    (define (spec-storage top ast-spec)
+      (pretty-print ast-spec)
+      #`(cons #'#,top (list #,@ast-spec)))
+    )
 
   ;; TODO
   ;; * get parents of super group
@@ -276,7 +228,7 @@
        (pretty-display ast-spec)
        (printf "struct-defs: ~a\n" struct-defs)
        (pretty-display (map syntax->datum (flatten struct-defs)))
-       #`(begin (require syntax/datum) #,@struct-defs)])))
+       #`(begin (require syntax/datum) (define cid #,(spec-storage #'cid ast-spec)) #,@struct-defs)])))
 
 (require (submod "." definer))
 (provide define-ast)
