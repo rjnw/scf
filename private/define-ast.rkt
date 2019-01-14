@@ -209,22 +209,39 @@
     (pretty-print (map syntax->datum ret))
     ret)
 
-  (define (spec-storage top ast-spec)
-    (define (node-spec-storage spec)
-      (match spec
-          [(ast:node variable pattern meta-info)
-           #`#s(ast:node #,variable #,pattern #,meta-info)]))
-    (define (group-spec-storage spec)
-      (match spec
-        [(ast:group name parent nodes meta-info)
-         #`#s(ast:group #'#,name #'#,parent (list #,@(map node-spec-storage nodes)) #,meta-info)]))
+(define (spec->storage top ast-spec)
+    (define (group-storage spec)
+      (define (node-storage spec)
+        (define (pattern-storage pat)
+          (match pat
+            [(ast:pat:single s) #`(list 'single #'#,s)]
+            [(ast:pat:datum s) #`(list 'datum #,s)]
+            [(ast:pat:multiple s) #`(list 'multiple #,@(map pattern-storage s))]
+            [(ast:pat:repeat s) #`(list 'repeat #,(pattern-storage s))]))
+        (match-define (ast:node variable pattern meta-info) spec)
+        #`(list 'ast:node #'#,variable #,(pattern-storage pattern) '#,meta-info))
+      (match-define (ast:group name parent nodes meta-info) spec)
+      #`(list 'ast:group #'#,name #'#,parent (list #,@(map node-storage nodes)) '#,meta-info))
     (printf "spec-storage\n")
     (pretty-print ast-spec)
-    #`(cons #'#,top (list #,@ast-spec))
-    #`(cons #'#,top (list #,@(map group-spec-storage ast-spec)))
-    )
+    (pretty-print (syntax->datum #`(cons #'#,top (list #,@(map group-storage ast-spec)))))
+    #`(cons #'#,top (list #,@(map group-storage ast-spec))))
 
-  )
+  (define (storage->spec storage)
+    (define (group-spec storage)
+      (define (node-spec storage)
+        (define (pattern-spec storage)
+          (match storage
+            [`(single ,s) (ast:pat:single s)]
+            [`(datum ,s) (ast:pat:datum s)]
+            [`(multiple ,s ...) (ast:pat:multiple (map pattern-spec s))]
+            [`(repeat ,s) (ast:pat:repeat (pattern-spec s))]))
+        (match-define `(ast:node ,variable ,pat ,meta-info) storage)
+        (ast:node variable (pattern-spec pat) meta-info))
+      (match-define `(ast:group ,name ,parent ,nodes ,meta-info) storage)
+      (ast:group name parent (map node-spec nodes) meta-info))
+    (match-define `(,top ,groups ...) storage)
+    (values top (map group-spec groups))))
 
 ;; TODO
 ;; * get parents of super group
@@ -237,9 +254,11 @@
      (define ast-spec (attribute gs.spec))
      (define struct-defs (build-defs #'cid ast-spec))
      (pretty-display ast-spec)
-     (printf "struct-defs: ~a\n" struct-defs)
+     (printf "struct-defs:") (pretty-print (map syntax->datum struct-defs))
      (pretty-display (map syntax->datum (flatten struct-defs)))
-     #`(begin (require syntax/datum) (define cid #,(spec-storage #'cid ast-spec)) #,@struct-defs)]))
+     #`(begin (require syntax/datum)
+              (define cid #,(spec->storage #'cid ast-spec))
+              #,@struct-defs)]))
 
 (module+ test
   (require "ast-syntax-structs.rkt")
@@ -252,4 +271,7 @@
     (terminal #:terminals
               [n number?]
               [sym symbol?]))
+  (printf "LC:")
+  (pretty-print LC)
+
   )
