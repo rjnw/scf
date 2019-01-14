@@ -23,13 +23,18 @@
         [(ast:pat:repeat r) (rec r)]
         [(ast:pat:datum _) '()]))
     (flatten (rec node-pat)))
-  (define (strip-single s)
-    (define splt (string-split (symbol->string (syntax->datum s)) ":"))
-    (datum->syntax s (string->symbol (car splt))))
-  (define (get-type s)
-    (define ss (symbol->string (syntax->datum s)))
-    (define t (string-split (second (string-split ss ":")) "."))
-    (datum->syntax s (string->symbol (first t))))
+
+  ;; id:terminal.sym -> (values "id" (list "terminal" "sym")
+  (define (split-nodeid i)
+    (define id-gn (string-split (symbol->string (syntax->datum i)) ":"))
+    (define group-node (string-split (second id-gn) "."))
+    (cons (first id-gn) group-node))
+  (define (nodeid s)
+    (define splits (split-nodeid s))
+    (datum->syntax s (string->symbol (first splits))))
+  (define (nodeid-group s)
+    (define splits (split-nodeid s))
+    (datum->syntax s (string->symbol (second splits))))
 
   (define (info-args meta-info)
     (match meta-info
@@ -55,29 +60,14 @@
         [else (meta-args (cdr meta-info))]))
     (rec meta-info))
 
-  (define (node-pat-format var node-pat) ;; TODO: cleanup
-    (define (build-repeat-printer lst)
-      (if (list? lst)
-          (let ([g-vars (map (λ(v) (gensym 'g)) lst)])
-            #`,@(with-datum #,(for/list ([r lst]
-                                         [g g-vars])
-                                #`(( #,g #,(datum->syntax #'42 '...)) `#,(build-printer r)))
-                  (datum (#,g-vars  #,(datum->syntax #'42 '...)))))
-          #`,@`#,(build-printer lst)))
-    (define (build-printer v)
-      (if (syntax? v)
-          v
-          (if (ast:pat:single? v)
-              #`,#,(ast:pat:single-spec v)
-              ;;hack to pass the pattern itself for distinguishing repeat and single
-              #`(#,@(map build-printer v)))))
+  (define (node-display var node-pat)
     (define (rec pat)
       (match pat
-        [(ast:pat:single s) pat]
-        [(ast:pat:multiple m) (map rec m)]
-        [(ast:pat:repeat r) (build-repeat-printer (rec r))]
-        [(ast:pat:datum d) d]))
-    (define p (build-printer (rec node-pat)))
+        [(ast:pat:single s) #`,#,s]
+        [(ast:pat:datum d) d]
+        [(ast:pat:multiple s) #`(#,@(map rec s))]
+        [(ast:pat:repeat r) #`,@(apply (curry map list) `#,(rec r))]))
+    (define p (rec node-pat))
     (if (ast:pat:multiple? node-pat)
         #``(#,var ,@`#,p)
         #``#,p))
@@ -104,6 +94,7 @@
         [(ast:group name _ _ meta-info)
          (cons (syntax->datum name) spec)]))
     (define group-map (make-hash (build-group-map spec)))
+
     (define (get-group-spec group-id)
       (if group-id (hash-ref group-map (syntax->datum group-id)) #f))
     (define (group-id spec)
@@ -131,58 +122,58 @@
                               #:common-mutable (λ (v) #`(#,v #:mutable))
                               #:common-auto-mutable (λ (v) #`(#,v #:auto #:mutable))))
       (define parent-args (group-args group-spec))
-      (define group-reader
-        (let ([farg (first (generate-temporaries (list name)))])
-          #`(define (#,(format-id name "$~a:~a" top name) #,farg)
-              (match #,farg
-                #,@(append
-                    (list
-                     (let ([x (first (generate-temporaries '(x)))])
-                       #`(#,x #:when (#,(format-id name "~a?" (group-id group-spec))
-                                      #,x) #,x)))
-                    (for/list ([node-spec node-specs])
+      ;; (define group-reader
+      ;;   (let ([farg (first (generate-temporaries (list name)))])
+      ;;     #`(define (#,(format-id name "$~a:~a" top name) #,farg)
+      ;;         (match #,farg
+      ;;           #,@(append
+      ;;               (list
+      ;;                (let ([x (first (generate-temporaries '(x)))])
+      ;;                  #`(#,x #:when (#,(format-id name "~a?" (group-id group-spec))
+      ;;                                 #,x) #,x)))
+      ;;               (for/list ([node-spec node-specs])
 
-                      (match-define (ast:node node-variable node-pattern node-meta-info) node-spec)
-                      ;; (printf "group-reader: node-pattern: ~a\n" node-pattern)
-                      (define (node-spec-sub-calls node-pattern (repeat 0))
-                        ;; TODO figure out nested repeats
-                        (match node-pattern
-                          [(ast:pat:single s)
-                           (match repeat
-                             [0 #`(#,(format-id top "$~a:~a" top (get-type s)) #,s)]
-                             [1 #`(map #,(format-id top "$~a:~a" top (get-type s)) #,s)])]
-                          [(ast:pat:multiple s) (map (curryr node-spec-sub-calls repeat) s)]
-                          [(ast:pat:repeat s) (node-spec-sub-calls s (add1 repeat))]
-                          [(ast:pat:datum s) '()]))
-                      (define clean-parent-args
-                        (map (compose strip-single cdr)
-                             (filter (λ (v) (not (member 'auto (car v)))) parent-args)))
-                      (define match-pat
-                        (match node-pattern
-                          [(ast:pat:single s) s]
-                          [else
-                           #``(#,node-variable
-                               #,@(map (λ (v) #`,#,v) clean-parent-args)
-                               #,@(node-reader-pattern node-pattern))]))
-                      #`(#,match-pat
-                         (#,(node-id node-spec group-spec)
-                          #,@clean-parent-args
-                          #,@ (flatten (node-spec-sub-calls node-pattern 0))
-                          ;; #,@(map (λ (n)
-                          ;;           #`(#,(format-id top "$~a:~a" top (get-type n)) #,n))
-                          ;;         (node-args node-pattern))
-                          )))
-                    (if (group-terminals meta-info)
-                        (for/list ([terminal (group-terminals meta-info)])
-                          (match-define (ast:node id pat meta-info) terminal)
-                          (match-define (ast:pat:single fcheck) pat)
-                          #`(#,id #:when (#,fcheck #,id) #,id))
-                        '())
-                    (list
+      ;;                 (match-define (ast:node node-variable node-pattern node-meta-info) node-spec)
+      ;;                 ;; (printf "group-reader: node-pattern: ~a\n" node-pattern)
+      ;;                 (define (node-spec-sub-calls node-pattern (repeat 0))
+      ;;                   ;; TODO figure out nested repeats
+      ;;                   (match node-pattern
+      ;;                     [(ast:pat:single s)
+      ;;                      (match repeat
+      ;;                        [0 #`(#,(format-id top "$~a:~a" top (nodeid-group s)) #,s)]
+      ;;                        [1 #`(map #,(format-id top "$~a:~a" top (nodeid-group s)) #,s)])]
+      ;;                     [(ast:pat:multiple s) (map (curryr node-spec-sub-calls repeat) s)]
+      ;;                     [(ast:pat:repeat s) (node-spec-sub-calls s (add1 repeat))]
+      ;;                     [(ast:pat:datum s) '()]))
+      ;;                 (define clean-parent-args
+      ;;                   (map (compose nodeid cdr)
+      ;;                        (filter (λ (v) (not (member 'auto (car v)))) parent-args)))
+      ;;                 (define match-pat
+      ;;                   (match node-pattern
+      ;;                     [(ast:pat:single s) s]
+      ;;                     [else
+      ;;                      #``(#,node-variable
+      ;;                          #,@(map (λ (v) #`,#,v) clean-parent-args)
+      ;;                          #,@(node-reader-pattern node-pattern))]))
+      ;;                 #`(#,match-pat
+      ;;                    (#,(node-id node-spec group-spec)
+      ;;                     #,@clean-parent-args
+      ;;                     #,@ (flatten (node-spec-sub-calls node-pattern 0))
+      ;;                     ;; #,@(map (λ (n)
+      ;;                     ;;           #`(#,(format-id top "$~a:~a" top (nodeid-group n)) #,n))
+      ;;                     ;;         (node-args node-pattern))
+      ;;                     )))
+      ;;               (if (group-terminals meta-info)
+      ;;                   (for/list ([terminal (group-terminals meta-info)])
+      ;;                     (match-define (ast:node id pat meta-info) terminal)
+      ;;                     (match-define (ast:pat:single fcheck) pat)
+      ;;                     #`(#,id #:when (#,fcheck #,id) #,id))
+      ;;                   '())
+      ;;               (list
 
-                     #`(else (error #,(format "error parsing ~a, given: "
-                                              (symbol->string (syntax->datum (group-id group-spec))))
-                                    #,farg))))))))
+      ;;                #`(else (error #,(format "error parsing ~a, given: "
+      ;;                                         (symbol->string (syntax->datum (group-id group-spec))))
+      ;;                               #,farg))))))))
       ;; (pretty-display (syntax->datum group-reader))
 
       (define (node-def node-spec)
@@ -190,10 +181,13 @@
         (define id (node-id node-spec group-spec))
         (define writer-args  (append (map cdr parent-args) (node-args pat)))
         #`(struct #,id #,(group-id group-spec) #,(node-args pat)
-            ;; #:methods gen:custom-write
-            ;; ((define (write-proc struc port mode)
-            ;;    (match-define (#,id #,@writer-args) struc)
-            ;;    (display #,(node-pat-format var pat) port)))
+            #:methods gen:custom-write
+            ((define (write-proc struc port mode)
+               (match-define (#,id #,@writer-args) struc)
+               (match mode
+                 [#t (write `(#,id #,@writer-args) port)]
+                 [#f (display #,(node-display var pat) port)]
+                 [else (print `(#,id #,@writer-args) port)])))
             ))
       (cons
        (if parent
@@ -209,7 +203,7 @@
     (pretty-print (map syntax->datum ret))
     ret)
 
-(define (spec->storage top ast-spec)
+  (define (spec->storage top ast-spec)
     (define (group-storage spec)
       (define (node-storage spec)
         (define (pattern-storage pat)
@@ -222,9 +216,6 @@
         #`(list 'ast:node #'#,variable #,(pattern-storage pattern) '#,meta-info))
       (match-define (ast:group name parent nodes meta-info) spec)
       #`(list 'ast:group #'#,name #'#,parent (list #,@(map node-storage nodes)) '#,meta-info))
-    (printf "spec-storage\n")
-    (pretty-print ast-spec)
-    (pretty-print (syntax->datum #`(cons #'#,top (list #,@(map group-storage ast-spec)))))
     #`(cons #'#,top (list #,@(map group-storage ast-spec))))
 
   (define (storage->spec storage)
@@ -253,11 +244,9 @@
     [(_ cid:id gs:ast-spec)
      (define ast-spec (attribute gs.spec))
      (define struct-defs (build-defs #'cid ast-spec))
-     (pretty-display ast-spec)
+     ;; (pretty-display ast-spec)
      (printf "struct-defs:") (pretty-print (map syntax->datum struct-defs))
-     (pretty-display (map syntax->datum (flatten struct-defs)))
-     #`(begin (require syntax/datum)
-              (define cid #,(spec->storage #'cid ast-spec))
+     #`(begin (define cid #,(spec->storage #'cid ast-spec))
               #,@struct-defs)]))
 
 (module+ test
@@ -271,7 +260,8 @@
     (terminal #:terminals
               [n number?]
               [sym symbol?]))
-  (printf "LC:")
-  (pretty-print LC)
+  (define lr (LC:expr:letrec '(a b c) '(1 2 3) 'd))
+  ;; (printf "LC:")
+  ;; (pretty-print LC)
 
   )
