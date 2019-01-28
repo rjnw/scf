@@ -41,9 +41,16 @@
   (pattern (name:id (~optional parent:id) nodes:ast-node ... meta:group-info ...)
            #:attr spec (ast:group #'name (attribute parent) (attribute nodes.spec) (attribute meta.as))))
 
+(define-splicing-syntax-class ast-info
+  (pattern (~seq (~datum #:prefix) v:expr)
+           #:attr as (cons 'prefix #'v))
+  (pattern (~seq (~datum #:seperator) v:expr)
+           #:attr as (cons 'seperator #'v))
+  (pattern (~seq (~datum #:top-seperator) v:expr)
+           #:attr as (cons 'top-seperator #'v)))
 (define-splicing-syntax-class ast-spec
-  (pattern (~seq groups:ast-group ...)
-           #:attr spec (attribute groups.spec)))
+  (pattern (~seq meta:ast-info ... groups:ast-group ...)
+           #:attr spec (cons (attribute meta.as) (attribute groups.spec))))
 
 (define-syntax-class language-spec
   #:description "language specification"
