@@ -31,15 +31,18 @@
   ;; id:terminal.sym -> (values "id" (list "terminal" "sym")
   (define (split-node-arg i)
     (define id-gn (string-split (symbol->string (syntax->datum i)) ":"))
-    (define group-node (string-split (second id-gn) "."))
+    (define group-node (if (>= (length id-gn) 2) (string-split (second id-gn) ".") #f))
     (cons (first id-gn) group-node))
+  (define (simple-node-arg? s)
+    (define splits (split-node-arg s))
+    (false? (cdr splits)))
   (define (node-arg-id s)
     (define splits (split-node-arg s))
-    (datum->syntax s (string->symbol (first splits))))
+    (datum->syntax s (string->symbol (car splits))))
   (define (node-arg-group s)
     (define splits (split-node-arg s))
-    (unless (>= (length splits) 2)
-      (error "node doesn't specify ast group"))
+    (unless (cdr splits)
+      (error "node doesn't specify ast group" s))
     (datum->syntax s (string->symbol (second splits))))
 
   (define (info-args meta-info)
@@ -72,13 +75,13 @@
         [(ast:pat:single s) (f-single s)]
         [(ast:pat:datum d) (f-datum d)]
         [(ast:pat:multiple s) (f-multiple (map rec s))]
-        [(ast:pat:repeat r) (f-repeat r)]))
+        [(ast:pat:repeat r) (f-repeat (rec r))]))
     (rec pat))
 
   (define (node-display var node-pat)
     (define (rec pat)
       (match pat
-        [(ast:pat:single s) #`,#,s]
+        [(ast:pat:single s) #`,#,(shorten-node-arg s)]
         [(ast:pat:datum d) d]
         [(ast:pat:multiple s) #`(#,@(map rec s))]
         [(ast:pat:repeat r) #`,@(apply (curry map list) `#,(rec r))]))
@@ -92,6 +95,9 @@
     (define prefix (if (assoc 'prefix meta) (cdr (assoc 'prefix meta)) top))
     (define seperator (if (assoc 'seperator meta) (cdr (assoc 'seperator meta)) #':))
     (define top-seperator (if (assoc 'top-seperator meta) (cdr (assoc 'top-seperator meta)) #':))
+    (define build-map? (if (assoc 'build-map meta) (cdr (assoc 'build-map meta)) #f))
+    (define custom-write? (if (assoc 'custom-write meta) (cdr (assoc 'custom-write meta)) #f))
+
     (define (build-group-map spec)
       (match spec
         [`(,groups ...)
@@ -127,13 +133,14 @@
     (define (group-def group-spec)
       (match-define (ast:group name parent node-specs meta-info) group-spec)
       ;; (printf "\n\ngroup: ~a\n" (syntax->datum name))
+
       (define args (meta-args meta-info
                               #:common-auto (λ (v) #`(#,v #:auto))
                               #:common-mutable (λ (v) #`(#,v #:mutable))
                               #:common-auto-mutable (λ (v) #`(#,v #:auto #:mutable))))
       (define parent-args (group-args group-spec))
       (define (group-generic-id stx) (format-id stx "~ag" stx))
-      (define (group-generic-map stx) (format-id stx "fmap-~a" stx))
+      (define (group-generic-map stx) (format-id stx "map-~a" stx))
       (define (group-generic-function stx) (format-id stx "f-~a" stx))
       (define gid (group-id group-spec))
       (define gname (group-name group-spec))
@@ -145,43 +152,55 @@
         (match-define (ast:node var pat meta-info) node-spec)
         (define id (node-id node-spec group-spec))
         (define args (node-args pat))
-        (printf "node-pat: ~a\n" (pretty-display pat))
-        (printf " args: ~a\n" args)
         (define short-flat-args (map shorten-node-arg (flatten args)))
         (define pargs (map cdr parent-args))
         (define full-args (append pargs short-flat-args))
-        #`(struct #,id #,(group-id group-spec) #,short-flat-args
-            ;; #:methods gen:custom-write
-            ;; ((define (write-proc struc port mode)
-            ;;    (match-define (#,id #,@writer-args) struc)
-            ;;    (write `(#,id #,@writer-args) port)
-            ;;    ;; (match mode
-            ;;    ;;   [#t (write `(#,id #,@writer-args) port)]
-            ;;    ;;   [#f (display #,(node-display var pat) port)]
-            ;;    ;;   [else (print `(#,id #,@writer-args) port)])
-            ;;    ))
-            #:methods #,(format-id generic-id "gen:~a" generic-id)
-            ((define (#,generic-map-id #,generic-id
-                      #,@generic-map-fs)
-               (match-define (#,id #,@full-args) #,generic-id)
-               (#,id #,@pargs
-
-                #,@(map (λ (wa na)
-                          #`(#,(group-generic-function (node-arg-group na)) #,wa))
-                        short-flat-args (flatten args)))
-               (void)))
-            ))
+        (define methods
+          (append
+           (if custom-write?
+               (list #`#:methods #`gen:custom-write
+                     #`((define (write-proc struc port mode)
+                          (match-define (#,id #,@full-args) struc)
+                          (match mode
+                            [#t (write `(#,id #,@full-args) port)]
+                            [#f (display #,(node-display var pat) port)]
+                            [else (print `(#,id #,@full-args) port)])
+                          )))
+               '())
+           (if build-map?
+               (list
+                #`#:methods (format-id generic-id "gen:~a" generic-id)
+                #`((define (#,generic-map-id #,generic-id
+                            #,@generic-map-fs)
+                     (match-define (#,id #,@full-args) #,generic-id)
+                     ;; todo: fix for common auto mutable args
+                     (#,id #,@pargs
+                      #,@(map-pat pat
+                                  (λ (s) (if (simple-node-arg? s)
+                                             (list s)
+                                             (list #`(#,(group-generic-function (node-arg-group s))
+                                                      #,(shorten-node-arg s)))))
+                                  (const '())
+                                  (λ (m) (flatten m))
+                                  (λ (r) (map (λ (r) #`(map #,@r)) r)))))))
+               '())))
+        #`(struct #,id #,(group-id group-spec) #,short-flat-args #,@methods))
+      (define node-defs (map node-def node-specs))
 
       (append
-       (list
-        (if parent
-            #`(struct #,gid #,(group-id (get-group-spec parent)) (#,@args))
-            #`(struct #,gid (#,@args)))
-        #`(define-generics #,generic-id
-            (#,generic-map-id #,generic-id #,@generic-map-fs)))
-       (map node-def node-specs)))
-    (define ret (flatten (map group-def spec)))
-    ret)
+       (if (empty? node-defs)           ;; if empty nodes the don't define parent.
+           '()
+           (list
+            (if parent
+                #`(struct #,gid #,(group-id (get-group-spec parent)) (#,@args))
+                #`(struct #,gid (#,@args)))))
+       (if build-map?
+           (list #`(define-generics #,generic-id
+                     (#,generic-map-id #,generic-id #,@generic-map-fs)))
+           '())
+       node-defs))
+    (define group-defs (flatten (map group-def spec)))
+    group-defs)
 
   (define (spec->storage top ast-spec)
     (define (group-storage spec)
@@ -189,7 +208,7 @@
         (define (pattern-storage pat)
           (match pat
             [(ast:pat:single s) #`(list 'single #'#,s)]
-            [(ast:pat:datum s) #`(list 'datum #,s)]
+            [(ast:pat:datum s) #`(list 'datum `#,s)]
             [(ast:pat:multiple s) #`(list 'multiple #,@(map pattern-storage s))]
             [(ast:pat:repeat s) #`(list 'repeat #,(pattern-storage s))]))
         (match-define (ast:node variable pattern meta-info) spec)
@@ -226,27 +245,26 @@
      (define ast-spec (attribute gs.spec))
      (define struct-defs (build-defs #'cid ast-spec))
      ;; (pretty-display ast-spec)
-     (printf "struct-defs:") (pretty-print (map syntax->datum struct-defs))
+     (printf "struct-defs:\n") (pretty-print (map syntax->datum struct-defs))
      #`(begin
          (require racket/generic)
          (define cid #,(spec->storage #'cid ast-spec))
          #,@struct-defs)]))
 
-(module+ test
-  (require "ast-syntax-structs.rkt")
-  (define-ast LC
-    #:prefix ||
-    #:top-seperator ||
-    #:seperator -
-    (expr
-     [lambda ((n:terminal.sym) body:expr)]
-     [letrec (((ids:terminal.sym vals:expr) ...) e:expr)]
-     [app (rator:expr rand:expr)]
-     [sym s:terminal.sym])
-    (terminal #:terminals
-              [n number?]
-              [sym symbol?]))
-  ;; (define lr (LC:expr:letrec '(a b c) '(1 2 3) 'd))
-  ;; (printf "LC:")
-  ;; (pretty-print LC)
-  )
+;; (module+ test
+;;   (define-ast LC
+;;     #:prefix ||
+;;     #:top-seperator ||
+;;     #:seperator -
+;;     (expr
+;;      [lambda ((n:terminal.sym) body:expr)]
+;;      [letrec (((ids:terminal.sym vals:expr) ...) e:expr)]
+;;      [app (rator:expr rand:expr)]
+;;      [sym s:terminal.sym])
+;;     (terminal #:terminals
+;;               [n number?]
+;;               [sym symbol?]))
+;;   ;; (define lr (LC:expr:letrec '(a b c) '(1 2 3) 'd))
+;;   ;; (printf "LC:")
+;;   ;; (pretty-print LC)
+;;   )
