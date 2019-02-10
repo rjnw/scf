@@ -207,7 +207,7 @@
                 #`(struct #,gid (#,@args))))
        (if build-map?
            (list #`(define-generics #,generic-id
-                     (#,generic-map-id #,generic-id #,@generic-map-fs)))
+                     (#,generic-map-id #,@generic-map-fs #,generic-id)))
            '())
        node-defs))
     (define group-defs (flatten (map group-def spec)))
