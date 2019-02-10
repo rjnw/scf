@@ -1,5 +1,5 @@
 #lang racket
-(require "../private/define-ast.rkt")
+(require rcf/ast)
 
 (define-ast hakaru
     #:prefix ||
@@ -9,16 +9,15 @@
   (expr
    [mod (main:expr fns:expr ...)]
    [cvar (var val:expr)]
-   [fun ((args:expr ...) ': ret-type:expr body:expr)]
-   [lets (((types:expr vars:expr vals:expr) ...) stmt:stmt body:expr)]
+   [fun (name (args:expr ...) ': ret-type:expr body:expr)]
+   [lets (((types vars:expr vals:expr) ...) stmt:stmt body:expr)]
    [var (type sym info)
-        ;; #:mutable type #:mutable info
-        ;; #:extra (#:methods gen:equal+hash
-        ;;          ((define (equal-proc v1 v2 _)
-        ;;             (equal? (expr-var-sym v1) (expr-var-sym v2)))
-        ;;           (define (hash-proc v _) (equal-hash-code (expr-var-sym v)))
-        ;;           (define (hash2-proc v _) (equal-secondary-hash-code (expr-var-sym v)))))
-        ]
+        #:mutable type #:mutable info
+        #:extra (#:methods gen:equal+hash
+                 ((define (equal-proc v1 v2 _)
+                    (equal? (expr-var-sym v1) (expr-var-sym v2)))
+                  (define (hash-proc v _) (equal-hash-code (expr-var-sym v)))
+                  (define (hash2-proc v _) (equal-secondary-hash-code (expr-var-sym v)))))]
    [arr (type index:expr size:expr body:expr)]
    [sum (type index:expr start:expr end:expr body:expr)]
    [prd (type index:expr start:expr end:expr body:expr)]
@@ -29,7 +28,8 @@
    [if (type tst:expr thn:expr els:expr)]
    [app (type rator:expr rands:expr ...)]
    [val (type v:expr)]
-   [intrf (sym)])
+   [intrf (sym)]
+   )
 
   (reducer
    [split (e:expr a:reducer b:reducer)]

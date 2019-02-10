@@ -1,5 +1,5 @@
 #lang racket
-(require "../private/define-ast.rkt")
+(require rcf/ast)
 
 (define-ast sham
   (def

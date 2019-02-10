@@ -1,5 +1,5 @@
 #lang racket
-(require "../private/compiler.rkt")
+(require rcf/ast)
 
 
 ;; old

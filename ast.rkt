@@ -184,7 +184,7 @@
            (if build-map?
                (list
                 #`#:methods (format-id generic-id "gen:~a" generic-id)
-                #`((define (#,generic-map-id #,generic-id #,@generic-map-fs )
+                #`((define (#,generic-map-id  #,@generic-map-fs #,generic-id)
                      (match-define (#,id #,@full-args) #,generic-id)
                      ;; todo: fix for common auto mutable args
                      (#,id #,@pargs
