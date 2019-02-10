@@ -20,7 +20,11 @@
 
 (define-splicing-syntax-class node-info
   (pattern (~seq (~datum #:attr) v:expr)
-           #:attr as (cons 'attr #'v)))
+           #:attr as (cons 'attr #'v))
+  (pattern (~seq (~datum #:mutable) v:id)
+           #:attr as (cons 'mutable #'v))
+  (pattern (~seq (~datum #:extra) v:expr)
+           #:attr as (cons 'extra #'v)))
 (define-syntax-class ast-node
   (pattern (var:id def:node-pattern info:node-info ...)
            #:attr spec (ast:node #'var (attribute def.spec) (attribute info.as))))

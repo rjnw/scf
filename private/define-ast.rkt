@@ -150,13 +150,27 @@
 
       (define (node-def node-spec)
         (match-define (ast:node var pat meta-info) node-spec)
+        (define (mutable-arg? a)
+          (for/or ([mi meta-info])
+            (match mi
+              [`(mutable . ,arg)
+               (equal? (syntax->datum a) (syntax->datum arg))]
+              [else false])))
+        (define meta-extras
+          (flatten
+           (for/list ([mi meta-info])
+             (match mi
+               [`(extra . ,v) (syntax->list v)]
+               [else '()]))))
         (define id (node-id node-spec group-spec))
         (define args (node-args pat))
         (define short-flat-args (map shorten-node-arg (flatten args)))
+        (define constructor-args (map (λ (a) (if (mutable-arg? a) #`(#,a #:mutable) a)) short-flat-args))
         (define pargs (map cdr parent-args))
         (define full-args (append pargs short-flat-args))
         (define methods
           (append
+           meta-extras
            (if custom-write?
                (list #`#:methods #`gen:custom-write
                      #`((define (write-proc struc port mode)
@@ -184,7 +198,7 @@
                                   (λ (m) (flatten m))
                                   (λ (r) (map (λ (r) #`(map #,@r)) r)))))))
                '())))
-        #`(struct #,id #,(group-id group-spec) #,short-flat-args #,@methods))
+        #`(struct #,id #,(group-id group-spec) #,constructor-args #,@methods))
       (define node-defs (map node-def node-specs))
 
       (append
