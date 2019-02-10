@@ -2,8 +2,8 @@
 
 (require
  (for-syntax
-  "ast-syntax-structs.rkt"
-  "ast-syntax-class.rkt"
+  "private/ast-syntax-structs.rkt"
+  "private/ast-syntax-class.rkt"
   syntax/parse
   racket/syntax
   racket/pretty))
@@ -184,8 +184,7 @@
            (if build-map?
                (list
                 #`#:methods (format-id generic-id "gen:~a" generic-id)
-                #`((define (#,generic-map-id #,generic-id
-                            #,@generic-map-fs)
+                #`((define (#,generic-map-id #,generic-id #,@generic-map-fs )
                      (match-define (#,id #,@full-args) #,generic-id)
                      ;; todo: fix for common auto mutable args
                      (#,id #,@pargs
@@ -196,18 +195,16 @@
                                                       #,(shorten-node-arg s)))))
                                   (const '())
                                   (λ (m) (flatten m))
-                                  (λ (r) (map (λ (r) #`(map #,@r)) r)))))))
+                                  (λ (r) (map (λ (r) (if (syntax->list r) #`(map #,@r) (list r))) r)))))))
                '())))
         #`(struct #,id #,(group-id group-spec) #,constructor-args #,@methods))
       (define node-defs (map node-def node-specs))
 
       (append
-       (if (empty? node-defs)           ;; if empty nodes the don't define parent.
-           '()
-           (list
+       (list
             (if parent
                 #`(struct #,gid #,(group-id (get-group-spec parent)) (#,@args))
-                #`(struct #,gid (#,@args)))))
+                #`(struct #,gid (#,@args))))
        (if build-map?
            (list #`(define-generics #,generic-id
                      (#,generic-map-id #,generic-id #,@generic-map-fs)))
@@ -259,7 +256,9 @@
      (define ast-spec (attribute gs.spec))
      (define struct-defs (build-defs #'cid ast-spec))
      ;; (pretty-display ast-spec)
-     (printf "struct-defs:\n") (pretty-print (map syntax->datum struct-defs))
+     (printf "struct-defs:\n")
+     (parameterize ([pretty-print-columns 80])
+       (pretty-print (map syntax->datum struct-defs)))
      #`(begin
          (require racket/generic)
          (define cid #,(spec->storage #'cid ast-spec))
