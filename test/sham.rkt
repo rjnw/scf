@@ -2,6 +2,7 @@
 (require rcf/ast)
 
 (define-ast sham
+  #:custom-write #t
   (def
     [module        (defs:def ...)]
     [function      ((arg-ids:terminal.sym arg-types:type) ... ret-type:type body:stmt)]
@@ -75,6 +76,8 @@
 (define (sham-vector? v) #f)
 
 (pretty-display (sham:ast:expr:let '(a b c) '(1 2 3) '(x y z) 's 'e))
+(pretty-display (sham:ast:stmt:block '(1 2 3 4)))
+(pretty-display (sham:ast:stmt:switch 's '(1 2 3) '(a b c) 'd))
 ;; (pretty-display ($sham:expr `(let ([a 1 (ref i32)] [b 2 (ref i32)] [c 3 (ref i32)]) (svoid) ,(sham:ast:expr:let '(a b c) '(1 2 3) '(x y z) 's 'e))))
 
 ;; (define get-signal

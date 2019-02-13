@@ -84,7 +84,9 @@
         [(ast:pat:single s) #`,#,(shorten-node-arg s)]
         [(ast:pat:datum d) d]
         [(ast:pat:multiple s) #`(#,@(map rec s))]
-        [(ast:pat:repeat r) #`,@(apply (curry map list) `#,(rec r))]))
+        [(ast:pat:repeat r) (if (ast:pat:single? r)
+                                #`,@`#,(rec r)
+                                #`,@(apply (curry map list) `#,(rec r)))]))
     (define p (rec node-pat))
     (if (ast:pat:multiple? node-pat)
         #``(#,var ,@`#,p)
