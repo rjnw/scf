@@ -4,9 +4,11 @@
 
 ;; old
 (define-ast LC
+  ;; #:custom-write #t
+  #:build-map #t
   (expr
-   [lambda ((n:terminal.sym) body:expr)]
-   [letrec (((ids:terminal.sym vals:expr) ...) e:expr)]
+   [lambda ((x:terminal.sym) body:expr)]
+   [letrec (((ids:terminal.sym vals:expr) ...) body:expr)]
    [app (rator:expr rand:expr)]
    [sym s:terminal.sym])
   (terminal #:terminals
