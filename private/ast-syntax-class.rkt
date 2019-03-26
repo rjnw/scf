@@ -27,7 +27,9 @@
            #:attr as (cons 'extra #'v)))
 (define-syntax-class ast-node
   (pattern (var:id def:node-pattern info:node-info ...)
-           #:attr spec (ast:node #'var (attribute def.spec) (attribute info.as))))
+           #:attr spec (ast:node #'var (attribute def.spec) (attribute info.as)))
+  (pattern (var:id (~datum #:terminal) proc:id)
+           #:attr spec (ast:term-node #'var #'proc)))
 
 (define-splicing-syntax-class group-info
   (pattern (~seq (~datum #:common) v:expr)
@@ -38,7 +40,7 @@
            #:attr as (cons '(common auto) #'v))
   (pattern (~seq (~datum #:common-auto-mutable) v:expr)
            #:attr as (cons '(common auto mutable) #'v))
-  (pattern (~seq (~datum #:terminals) nodes:ast-node ...)
+  (pattern (~seq (~datum #:terminals) (nodes:ast-node ...))
            #:attr as (cons '(terminals) (attribute nodes.spec))))
 (define-syntax-class ast-group
   #:description "ast group specification"

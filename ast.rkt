@@ -121,7 +121,10 @@
                  (format-id top "~a~a~a" prefix top-seperator name)
                  name))]))
     (define (node-id node-spec group-spec)
-      (match-define (ast:node var pat meta-info) node-spec)
+      (define var
+        (match node-spec
+          [(ast:node var _ _) var]
+          [(ast:term-node var _) var]))
       (format-id var "~a~a~a" (group-id group-spec) seperator var))
     (define (group-args group-spec)
       (match-define (ast:group id parent node meta-info) group-spec)
@@ -141,6 +144,7 @@
                               #:common-mutable (λ (v) #`(#,v #:mutable))
                               #:common-auto-mutable (λ (v) #`(#,v #:auto #:mutable))))
       (define parent-args (group-args group-spec))
+      (define pargs (map cdr parent-args))
       (define (group-generic-id stx) (format-id stx "~ag" stx))
       (define (group-generic-map stx) (format-id stx "map-~a" stx))
       (define (group-generic-function stx) (format-id stx "f-~a" stx))
@@ -168,7 +172,6 @@
         (define args (node-args pat))
         (define short-flat-args (map shorten-node-arg (flatten args)))
         (define constructor-args (map (λ (a) (if (mutable-arg? a) #`(#,a #:mutable) a)) short-flat-args))
-        (define pargs (map cdr parent-args))
         (define full-args (append pargs short-flat-args))
         (define methods
           (append
@@ -179,9 +182,9 @@
                           (match-define (#,id #,@full-args) struc)
                           (display #,(node-display var pat) port)
                           #;(match mode
-                            [#t (write `(#,id #,@full-args) port)]
-                            [#f (display #,(node-display var pat) port)]
-                            [else (print `(#,id #,@full-args) port)])
+                              [#t (write `(#,id #,@full-args) port)]
+                              [#f (display #,(node-display var pat) port)]
+                              [else (print `(#,id #,@full-args) port)])
                           )))
                '())
            (if build-map?
@@ -201,13 +204,36 @@
                                   (λ (r) (map (λ (r) (if (syntax->list r) #`(map #,@r) (list r))) r)))))))
                '())))
         #`(struct #,id #,(group-id group-spec) #,constructor-args #,@methods))
-      (define node-defs (map node-def node-specs))
-
+      (define (term-node-def node-spec)
+        (match-define (ast:term-node var proc) node-spec)
+        (define id (node-id node-spec group-spec))
+        (define methods
+          (append
+           (if custom-write?
+               (list #`#:methods #`gen:custom-write
+                     #`((define (write-proc struc port mode)
+                          (match-define (#,id val) struc)
+                          (display val ;; `(#,(shorten-node-arg var) ,val)
+                                   port))))
+               '())
+           (if build-map?
+               (list #`#:methods (format-id generic-id "gen:~a" generic-id)
+                     #`((define (#,generic-map-id  #,@generic-map-fs #,generic-id)
+                          (match-define (#,id #,@pargs val) #,generic-id)
+                           (#,id #,@pargs val ;; (#,(group-generic-function name) val) TODO
+                           ))))
+               '())))
+        #`(struct #,id #,(group-id group-spec) (#,(shorten-node-arg var)) #,@methods))
+      (define (general-node-def node-spec)
+        (match node-spec
+          [(ast:node _ _ _) (node-def node-spec)]
+          [(ast:term-node _ _) (term-node-def node-spec)]))
+      (define node-defs (flatten (map general-node-def node-specs)))
       (append
        (list
-            (if parent
-                #`(struct #,gid #,(group-id (get-group-spec parent)) (#,@args))
-                #`(struct #,gid (#,@args))))
+        (if parent
+            #`(struct #,gid #,(group-id (get-group-spec parent)) (#,@args))
+            #`(struct #,gid (#,@args))))
        (if build-map?
            (list #`(define-generics #,generic-id
                      (#,generic-map-id #,@generic-map-fs #,generic-id)))
@@ -225,8 +251,9 @@
             [(ast:pat:datum s) #`(list 'datum `#,s)]
             [(ast:pat:multiple s) #`(list 'multiple #,@(map pattern-storage s))]
             [(ast:pat:repeat s) #`(list 'repeat #,(pattern-storage s))]))
-        (match-define (ast:node variable pattern meta-info) spec)
-        #`(list 'ast:node #'#,variable #,(pattern-storage pattern) '#,meta-info))
+        (match spec
+          [(ast:node variable pattern meta-info) #`(list 'ast:node #'#,variable #,(pattern-storage pattern) '#,meta-info)]
+          [(ast:term-node variable proc) `(list 'ast:term-node #'#,variable #'#,proc)]))
       (match-define (ast:group name parent nodes meta-info) spec)
       #`(list 'ast:group #'#,name #'#,parent (list #,@(map node-storage nodes)) '#,meta-info))
     ;; todo add meta info
@@ -260,8 +287,8 @@
      (define struct-defs (build-defs #'cid ast-spec))
      ;; (pretty-display ast-spec)
      ;; (printf "struct-defs:\n")
-     ;; (parameterize ([pretty-print-columns 80])
-     ;;   (pretty-print (map syntax->datum struct-defs)))
+     (parameterize ([pretty-print-columns 80])
+       (pretty-print (map syntax->datum struct-defs)))
      #`(begin
          (require racket/generic)
          (define cid #,(spec->storage #'cid ast-spec))
