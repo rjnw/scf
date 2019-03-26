@@ -10,30 +10,25 @@
   #:top-seperator ||
   #:seperator -
   (expr
-   [lambda ((x:terminal.sym ...) body:expr)]
-   [letrec (((ids:terminal.sym vals:expr) ...) body:expr)]
+   [lambda ((x:expr.sym ...) body:expr)]
+   [letrec (((ids:expr.sym vals:expr) ...) body:expr)]
    [app (rator:expr rand:expr ...)]
-   [term v:terminal])
-  (terminal #:terminals
-            [n number?]
-            [sym symbol?]))
+   [n #:terminal number?]
+   [sym #:terminal symbol?]))
 
-(define ex1 (expr-app (expr-term '+) (list (expr-term 2) (expr-term 3))))
-(define ex2 (expr-app (expr-term '*) (list (expr-term 2) (expr-app (expr-term '+)
-                                                                   (list (expr-term 3)
-                                                                         (expr-term 4))))))
-(define (plus a b) (expr-app (expr-term '+) (list a b)))
-(define (mult a b) (expr-app (expr-term '*) (list a b)))
-(define t expr-term)
-(define ex3 (expr-lambda '(a) (plus (t 'a) (plus (t 2) (t 3)))))
+(define ex1 (expr-app (expr-sym '+) (list (expr-n 2) (expr-n 3))))
+(define ex2 (expr-app (expr-sym '*) (list (expr-n 2) (expr-app (expr-sym '+)
+                                                                   (list (expr-n 3)
+                                                                         (expr-n 4))))))
+(define (plus a b) (expr-app (expr-sym '+) (list a b)))
+(define (mult a b) (expr-app (expr-sym '*) (list a b)))
+(define n expr-n)
+(define ex3 (expr-lambda (list (expr-sym 'a)) (plus (expr-sym 'a) (plus (n 2) (n 3)))))
+
 (define (constant-fold e)
-  (match (map-expr constant-fold identity e)
-    [(expr-app (expr-term '+) (list (expr-term v1) (expr-term v2)))
-     #:when (and (number? v1) (number? v2))
-     (expr-term (+ v1 v2))]
-    [(expr-app (expr-term '*) (list (expr-term v1) (expr-term v2)))
-     #:when (and (number? v1) (number? v2))
-     (expr-term (* v1 v2))]
+  (match (map-expr constant-fold e)
+    [(expr-app (expr-sym '+) (list (expr-n v) ...)) (expr-n (apply + v))]
+    [(expr-app (expr-sym '*) (list (expr-n v) ...)) (expr-n (apply * v))]
     [e e]))
 
 (printf "before: ~a, after: ~a\n" ex1 (constant-fold ex1))
