@@ -287,8 +287,8 @@
      (define struct-defs (build-defs #'cid ast-spec))
      ;; (pretty-display ast-spec)
      ;; (printf "struct-defs:\n")
-     (parameterize ([pretty-print-columns 80])
-       (pretty-print (map syntax->datum struct-defs)))
+     ;; (parameterize ([pretty-print-columns 80])
+     ;;   (pretty-print (map syntax->datum struct-defs)))
      #`(begin
          (require racket/generic)
          (define cid #,(spec->storage #'cid ast-spec))

@@ -59,15 +59,15 @@
          [array  (value:terminal.array        type:type)]
          [vector (value:terminal.vector       type:type)])
   (terminal #:terminals
-            [sym symbol?]
-            [float fixnum?]
-            [signed-int exact-integer?]
-            [unsigned-int exact-nonnegative-integer?]
-            [string sham-string?]
-            [llvm sham-llvm?]
-            [struct sham-struct?]
-            [array sham-array?]
-            [vector sham-vector?]))
+            ([sym symbol?]
+             [float fixnum?]
+             [signed-int exact-integer?]
+             [unsigned-int exact-nonnegative-integer?]
+             [string sham-string?]
+             [llvm sham-llvm?]
+             [struct sham-struct?]
+             [array sham-array?]
+             [vector sham-vector?])))
 
 (define (sham-string? s) #f)
 (define (sham-llvm? v) #f)
