@@ -1,7 +1,5 @@
 #lang racket
-;; (require rcf/ast)
-(require "../ast.rkt")
-
+(require scf)
 ;; old
 (define-ast LC
   #:custom-write #t
@@ -27,8 +25,10 @@
 
 (define (constant-fold e)
   (match (map-expr constant-fold e)
-    [(expr-app (expr-sym '+) (list (expr-n v) ...)) (expr-n (apply + v))]
-    [(expr-app (expr-sym '*) (list (expr-n v) ...)) (expr-n (apply * v))]
+    [(expr-app (expr-sym '+) (list (expr-n v) ...))
+     (expr-n (apply + v))]
+    [(expr-app (expr-sym '*) (list (expr-n v) ...))
+     (expr-n (apply * v))]
     [e e]))
 
 (printf "before: ~a, after: ~a\n" ex1 (constant-fold ex1))

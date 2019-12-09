@@ -1,6 +1,6 @@
 #lang racket
-;; (require rcf/ast)
-(require "../ast.rkt")
+(require scf)
+
 (define-ast hakaru
     #:prefix ||
     #:top-seperator ||

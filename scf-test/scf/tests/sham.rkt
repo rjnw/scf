@@ -1,5 +1,5 @@
 #lang racket
-(require rcf/ast)
+(require scf)
 
 (define-ast sham
   #:custom-write #t
@@ -78,21 +78,3 @@
 (pretty-display (sham:ast:expr:let '(a b c) '(1 2 3) '(x y z) 's 'e))
 (pretty-display (sham:ast:stmt:block '(1 2 3 4)))
 (pretty-display (sham:ast:stmt:switch 's '(1 2 3) '(a b c) 'd))
-;; (pretty-display ($sham:expr `(let ([a 1 (ref i32)] [b 2 (ref i32)] [c 3 (ref i32)]) (svoid) ,(sham:ast:expr:let '(a b c) '(1 2 3) '(x y z) 's 'e))))
-
-;; (define get-signal
-;;   (s$:dfunction
-;;    (void) 'get-signal
-;;    '(cblock index)
-;;    (list s$:f32* s$:i32) s$:f32
-;;    (s$:ret (load-signal (s$:v 'cblock) (s$:v 'index)))))
-
-;; (define get-signal-simple
-;;   ($sham:def
-;;    `(function
-;;      ,(void) get-signal
-;;      (cblock (pointer (ref f32))) (index (ref i32))
-;;      (ref f32)
-;;      (return (app load-signal cblock index)))))
-;; (define (load-signal s i)
-;;   (s$:load (s$:gep^ s i)))

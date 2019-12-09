@@ -13,8 +13,6 @@
 (begin-for-syntax
   (require racket)
   (require syntax/datum)
-  (define (full-id lineage)
-    (foldl (λ (c d) (format-id c "~a:~a" c d)) (car lineage) (cdr lineage)))
   (define (node-args node-pat)
     (define (rec pat)
       (match pat
@@ -94,11 +92,14 @@
 
   (define (build-defs top meta-spec)
     (match-define (cons meta spec) meta-spec)
-    (define prefix (if (assoc 'prefix meta) (cdr (assoc 'prefix meta)) top))
-    (define seperator (if (assoc 'seperator meta) (cdr (assoc 'seperator meta)) #':))
-    (define top-seperator (if (assoc 'top-seperator meta) (cdr (assoc 'top-seperator meta)) #':))
-    (define build-map? (if (assoc 'build-map meta) (cdr (assoc 'build-map meta)) #f))
-    (define custom-write? (if (assoc 'custom-write meta) (cdr (assoc 'custom-write meta)) #f))
+    (define (get-meta sym default)
+      (if (assoc sym meta) (cdr (assoc sym meta)) default))
+    (define prefix (get-meta 'prefix top))
+    (define seperator (get-meta 'seperator #': ))
+    (define top-seperator (get-meta 'top-seperator #':))
+    (define build-map? (get-meta 'build-map #f))
+    (define build-macros? (get-meta 'build-macros #f))
+    (define custom-write? (get-meta 'custom-write #f))
 
     (define (build-group-map spec)
       (match spec
@@ -220,7 +221,7 @@
                (list #`#:methods (format-id generic-id "gen:~a" generic-id)
                      #`((define (#,generic-map-id  #,@generic-map-fs #,generic-id)
                           (match-define (#,id #,@pargs val) #,generic-id)
-                           (#,id #,@pargs val ;; (#,(group-generic-function name) val) TODO
+                          (#,id #,@pargs val ;; (#,(group-generic-function name) val) TODO
                            ))))
                '())))
         #`(struct #,id #,(group-id group-spec) (#,(shorten-node-arg var)) #,@methods))
